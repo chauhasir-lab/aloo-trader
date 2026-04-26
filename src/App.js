@@ -224,17 +224,33 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, dispatch
   const openEdit = (item) => { setForm({ ...item }); setEditId(item.id); setShowForm(true); };
 
   const del = async (id) => {
-    const lot = purchases.find(x => x.id === id);
-    if (!lot) return;
-    await ops.purchases.deleteItem(id);
-    for (const d of dispatches) {
-      const newItems = (d.items || []).filter(i => i.lot_id !== lot.lot_id);
-      if (newItems.length !== (d.items || []).length) {
-        if (newItems.length === 0) await ops.dispatches.deleteItem(d.id);
-        else await ops.dispatches.editItem({ ...d, items: newItems });
+  const lot = purchases.find(x => x.id === id);
+  if (!lot) return;
+
+  const affectedDispatchIds = [];
+
+  for (const d of dispatches) {
+    const newItems = (d.items || []).filter(i => i.lot_id !== lot.lot_id);
+
+    if (newItems.length !== (d.items || []).length) {
+      affectedDispatchIds.push(d.id);
+
+      if (newItems.length === 0) {
+        await ops.dispatches.deleteItem(d.id);
+      } else {
+        await ops.dispatches.editItem({ ...d, items: newItems });
       }
     }
-  };
+  }
+
+  for (const sale of sales) {
+    if (affectedDispatchIds.includes(sale.gp_id)) {
+      await ops.sales.deleteItem(sale.id);
+    }
+  }
+
+  await ops.purchases.deleteItem(id);
+};
 
   return (
     <div>
