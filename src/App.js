@@ -21,10 +21,8 @@ const useSupabaseTable = (tableName, defaultValue = []) => {
   }, [tableName]);
 
   const save = useCallback(async (valOrFn) => {
-    // valOrFn can be array (full replace) or function
     const newData = typeof valOrFn === "function" ? valOrFn(data) : valOrFn;
     setData(newData);
-    // We handle individual ops via addItem/editItem/deleteItem below
   }, [data]);
 
   const addItem = useCallback(async (item) => {
@@ -229,7 +227,6 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, dispatch
     const lot = purchases.find(x => x.id === id);
     if (!lot) return;
     await ops.purchases.deleteItem(id);
-    // cascade: remove from dispatches
     for (const d of dispatches) {
       const newItems = (d.items || []).filter(i => i.lot_id !== lot.lot_id);
       if (newItems.length !== (d.items || []).length) {
@@ -349,6 +346,15 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
     return (parseFloat(lot.manual_bags) || 0) - dispatched;
   };
 
+  // ✅ FIX: Calculate proportional purchase value for a dispatch item
+  const getLoadedValue = (it) => {
+    const lot = purchases.find(p => p.lot_id === it.lot_id);
+    if (!lot) return 0;
+    const totalLotBags = parseFloat(lot.manual_bags) || 1;
+    const dispBags = parseFloat(it.bags_loaded) || 0;
+    return (dispBags / totalLotBags) * (lot.total_amount || 0);
+  };
+
   const updateItem = (idx, key, val) => {
     setItems(p => p.map((it, i) => {
       if (i !== idx) return it;
@@ -387,6 +393,8 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
         {[...dispatches].reverse().map(d => {
           const totalBags = (d.items || []).reduce((s, i) => s + (parseFloat(i.bags_loaded) || 0), 0);
           const totalWt = (d.items || []).reduce((s, i) => s + (parseFloat(i.weight_loaded) || 0), 0);
+          // ✅ FIX: Total loaded purchase value for entire vehicle
+          const totalLoadedValue = (d.items || []).reduce((s, it) => s + getLoadedValue(it), 0);
           return (
             <div key={d.id} style={s.card}>
               <div style={s.rowBetween}>
@@ -401,15 +409,32 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
                 <div style={{ fontSize: 12, color: clr.muted }}>{getName(mandis, d.mandi_id)} · {getName(parties, d.party_id)} · {fmtDate(d.date)}</div>
               </div>
               <div style={s.divider} />
-              {(d.items || []).map((it, idx) => (
-                <div key={idx} style={{ ...s.rowBetween, marginBottom: 4, fontSize: 13 }}>
-                  <span style={{ color: clr.accent }}>LOT: {it.lot_id}</span>
-                  <span>{fmt(it.bags_loaded)} bags · {fmt(it.weight_loaded, 1)} kg</span>
+              {/* ✅ FIX: Per-lot loaded value shown */}
+              {(d.items || []).map((it, idx) => {
+                const loadedVal = getLoadedValue(it);
+                return (
+                  <div key={idx} style={{ marginBottom: 6 }}>
+                    <div style={{ ...s.rowBetween, fontSize: 13 }}>
+                      <span style={{ color: clr.accent, fontWeight: 700 }}>LOT: {it.lot_id}</span>
+                      <span>{fmt(it.bags_loaded)} bags · {fmt(it.weight_loaded, 1)} kg</span>
+                    </div>
+                    <div style={{ ...s.rowBetween, fontSize: 11, color: clr.muted, paddingLeft: 4 }}>
+                      <span>खरीद मूल्य (Loaded Value)</span>
+                      <span style={{ color: clr.accent, fontWeight: 600 }}>₹{fmt(loadedVal)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+              {/* ✅ FIX: Vehicle total with loaded value */}
+              <div style={{ marginTop: 8, background: clr.green + "18", borderRadius: 8, padding: "8px 12px" }}>
+                <div style={s.rowBetween}>
+                  <span style={{ fontSize: 12, color: clr.muted }}>कुल (Total)</span>
+                  <span style={{ fontWeight: 800, color: clr.green }}>{fmt(totalBags)} bags · {fmt(totalWt, 1)} kg</span>
                 </div>
-              ))}
-              <div style={{ ...s.rowBetween, marginTop: 8, background: clr.green + "18", borderRadius: 8, padding: "8px 12px" }}>
-                <span style={{ fontSize: 12, color: clr.muted }}>Total</span>
-                <span style={{ fontWeight: 800, color: clr.green }}>{fmt(totalBags)} bags · {fmt(totalWt, 1)} kg</span>
+                <div style={s.rowBetween}>
+                  <span style={{ fontSize: 11, color: clr.muted }}>Total Loaded Purchase Value</span>
+                  <span style={{ fontWeight: 700, color: clr.accent, fontSize: 13 }}>₹{fmt(totalLoadedValue)}</span>
+                </div>
               </div>
             </div>
           );
@@ -440,6 +465,7 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
         </div>
         {items.map((it, idx) => {
           const avail = getAvailableBags(it.lot_id, editId);
+          const loadedVal = getLoadedValue(it);
           return (
             <div key={it.id} style={{ ...s.card2, marginBottom: 8 }}>
               <div style={s.rowBetween}>
@@ -457,6 +483,12 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
                 <Field label="Bags"><input type="number" style={s.input} value={it.bags_loaded} onChange={e => updateItem(idx, "bags_loaded", e.target.value)} /></Field>
                 <Field label="Weight kg"><input type="number" style={s.input} value={it.weight_loaded} onChange={e => updateItem(idx, "weight_loaded", e.target.value)} /></Field>
               </div>
+              {it.lot_id && it.bags_loaded && (
+                <div style={{ fontSize: 12, color: clr.muted, marginTop: 4, ...s.rowBetween }}>
+                  <span>Loaded Purchase Value</span>
+                  <span style={{ color: clr.accent, fontWeight: 700 }}>₹{fmt(loadedVal)}</span>
+                </div>
+              )}
             </div>
           );
         })}
@@ -472,7 +504,10 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
   const [editId, setEditId] = useState(null);
   const [gpId, setGpId] = useState(""); const [saleDate, setSaleDate] = useState(today());
   const [lotSales, setLotSales] = useState([]);
-  const [commission, setCommission] = useState("2"); const [labour, setLabour] = useState(""); const [transport, setTransport] = useState(""); const [otherDeductions, setOtherDeductions] = useState("");
+  const [commission, setCommission] = useState("2");
+  const [labour, setLabour] = useState("");
+  const [transport, setTransport] = useState("");
+  const [otherDeductions, setOtherDeductions] = useState("");
   const [err, setErr] = useState("");
   const getName = (arr, id) => arr.find(x => x.id === id)?.name || "-";
 
@@ -484,19 +519,34 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
 
   const updateLotSale = (idx, key, val) => setLotSales(p => p.map((it, i) => i === idx ? { ...it, [key]: val } : it));
 
-  const calcLot = (it) => {
+  // ✅ CORE FIX: Proportional expense split by weight + correct P&L
+  const calcLot = (it, allLotSales) => {
     const lot = purchases.find(p => p.lot_id === it.lot_id);
     const grossSale = (parseFloat(it.sale_rate) || 0) * (parseFloat(it.sale_weight) || 0);
     const commAmt = grossSale * (parseFloat(commission) || 0) / 100;
-    const labAmt = parseFloat(labour) || 0;
-    const tranAmt = parseFloat(transport) || 0;
-    const othAmt = parseFloat(otherDeductions) || 0;
-    const netSale = grossSale - commAmt - labAmt - tranAmt - othAmt;
+
+    // Total sale weight across all lots in this GP for proportional split
+    const totalGpSaleWeight = (allLotSales || lotSales).reduce((s, l) => s + (parseFloat(l.sale_weight) || 0), 0);
+    const thisLotWeight = parseFloat(it.sale_weight) || 0;
+    const proportion = totalGpSaleWeight > 0 ? thisLotWeight / totalGpSaleWeight : 1;
+
+    // ✅ Fixed expenses split proportionally by weight
+    const labAmt   = (parseFloat(labour) || 0) * proportion;
+    const tranAmt  = (parseFloat(transport) || 0) * proportion;
+    const othAmt   = (parseFloat(otherDeductions) || 0) * proportion;
+
+    const totalExpenses = commAmt + labAmt + tranAmt + othAmt;
+    const netSale = grossSale - totalExpenses;
+
+    // ✅ Proportional purchase cost (bags-based)
     const dispBags = parseFloat(it.bags_loaded) || 0;
     const totalLotBags = parseFloat(lot?.manual_bags) || 1;
     const purchaseCost = (dispBags / totalLotBags) * (lot?.total_amount || 0);
+
     const weightLoss = (parseFloat(it.weight_loaded) || 0) - (parseFloat(it.sale_weight) || 0);
-    return { grossSale, commAmt, netSale, purchaseCost, weightLoss, profitLoss: netSale - purchaseCost };
+    const profitLoss = netSale - purchaseCost;
+
+    return { grossSale, commAmt, labAmt, tranAmt, othAmt, totalExpenses, netSale, purchaseCost, weightLoss, profitLoss, proportion };
   };
 
   const openEdit = (sale) => {
@@ -510,7 +560,11 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
     if (!gpId) { setErr("Select Gate Pass"); return; }
     for (const it of lotSales) { if (!it.sale_rate) { setErr("Fill sale rate for all lots"); return; } }
     const gp = dispatches.find(d => d.id === gpId);
-    const saleData = { id: editId || uid(), gp_id: gpId, gp_num: gp?.gp_num, party_id: gp?.party_id, mandi_id: gp?.mandi_id, date: saleDate, commission, labour, transport, other_deductions: otherDeductions, lot_sales: lotSales.map(it => ({ ...it, ...calcLot(it) })) };
+    const saleData = {
+      id: editId || uid(), gp_id: gpId, gp_num: gp?.gp_num, party_id: gp?.party_id, mandi_id: gp?.mandi_id,
+      date: saleDate, commission, labour, transport, other_deductions: otherDeductions,
+      lot_sales: lotSales.map(it => ({ ...it, ...calcLot(it, lotSales) }))
+    };
     if (editId) await ops.sales.editItem(saleData);
     else await ops.sales.addItem(saleData);
     setShowForm(false); setEditId(null); setGpId(""); setLotSales([]); setErr("");
@@ -531,8 +585,10 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
       <div style={s.content}>
         {sales.length === 0 && <div style={{ ...s.card, textAlign: "center", color: clr.muted, padding: 32 }}>No sales yet.</div>}
         {[...sales].reverse().map(sale => {
+          const totalGross = (sale.lot_sales || []).reduce((s, l) => s + (l.grossSale || 0), 0);
           const totalNet = (sale.lot_sales || []).reduce((s, l) => s + (l.netSale || 0), 0);
           const totalPL = (sale.lot_sales || []).reduce((s, l) => s + (l.profitLoss || 0), 0);
+          const totalExpenses = (sale.lot_sales || []).reduce((s, l) => s + (l.totalExpenses || 0), 0);
           return (
             <div key={sale.id} style={s.card}>
               <div style={s.rowBetween}>
@@ -543,14 +599,37 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
                 </div>
               </div>
               <div style={{ fontSize: 12, color: clr.muted, marginTop: 4 }}>{getName(parties, sale.party_id)} · {getName(mandis, sale.mandi_id)} · {fmtDate(sale.date)}</div>
+
+              {/* ✅ FIX: GP-level expense summary */}
+              <div style={{ background: clr.bg, borderRadius: 8, padding: "8px 10px", marginTop: 8, fontSize: 12 }}>
+                <div style={s.rowBetween}><span style={{ color: clr.muted }}>Gross Sale</span><span style={{ fontWeight: 700 }}>₹{fmt(totalGross)}</span></div>
+                <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Total Expenses</span><span style={{ color: clr.red }}>-₹{fmt(totalExpenses)}</span></div>
+                <div style={{ ...s.rowBetween, borderTop: `1px solid ${clr.border}`, marginTop: 4, paddingTop: 4 }}>
+                  <span style={{ fontWeight: 700 }}>Net Sale</span>
+                  <span style={{ fontWeight: 800, color: clr.blue }}>₹{fmt(totalNet)}</span>
+                </div>
+              </div>
+
               <div style={s.divider} />
               {(sale.lot_sales || []).map((ls, i) => (
                 <div key={i} style={{ ...s.card2, marginBottom: 6 }}>
                   <div style={s.rowBetween}>
                     <span style={{ color: clr.accent, fontWeight: 700 }}>LOT: {ls.lot_id}</span>
-                    <span style={{ color: ls.profitLoss >= 0 ? clr.green : clr.red, fontWeight: 700 }}>₹{fmt(ls.profitLoss)} {ls.profitLoss >= 0 ? "✅" : "🔴"}</span>
+                    <span style={{ color: ls.profitLoss >= 0 ? clr.green : clr.red, fontWeight: 700 }}>
+                      {ls.profitLoss >= 0 ? "✅" : "🔴"} ₹{fmt(Math.abs(ls.profitLoss))}
+                    </span>
                   </div>
-                  <div style={{ fontSize: 12, color: clr.muted, marginTop: 4 }}>Rate: ₹{ls.sale_rate}/kg · Wt Loss: {fmt(ls.weightLoss, 1)}kg · Net: ₹{fmt(ls.netSale)}</div>
+                  {/* ✅ FIX: Full breakdown per lot */}
+                  <div style={{ fontSize: 11, color: clr.muted, marginTop: 4 }}>
+                    <div style={s.rowBetween}><span>Gross Sale ({fmt(ls.sale_weight,1)}kg × ₹{ls.sale_rate})</span><span>₹{fmt(ls.grossSale)}</span></div>
+                    <div style={s.rowBetween}><span>Commission ({sale.commission}%)</span><span>-₹{fmt(ls.commAmt)}</span></div>
+                    {ls.labAmt > 0 && <div style={s.rowBetween}><span>Labour (prop.)</span><span>-₹{fmt(ls.labAmt)}</span></div>}
+                    {ls.tranAmt > 0 && <div style={s.rowBetween}><span>Transport (prop.)</span><span>-₹{fmt(ls.tranAmt)}</span></div>}
+                    {ls.othAmt > 0 && <div style={s.rowBetween}><span>Other (prop.)</span><span>-₹{fmt(ls.othAmt)}</span></div>}
+                    <div style={{ ...s.rowBetween, borderTop: `1px solid ${clr.border}`, marginTop: 3, paddingTop: 3 }}><span>Net Sale</span><span style={{ color: clr.blue, fontWeight: 700 }}>₹{fmt(ls.netSale)}</span></div>
+                    <div style={s.rowBetween}><span>Purchase Cost</span><span>-₹{fmt(ls.purchaseCost)}</span></div>
+                    <div style={s.rowBetween}><span>Weight Loss</span><span>{fmt(ls.weightLoss, 1)} kg</span></div>
+                  </div>
                 </div>
               ))}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
@@ -570,14 +649,20 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
           </select>
         </Field>
         <Field label="Sale Date"><input type="date" style={s.input} value={saleDate} onChange={e => setSaleDate(e.target.value)} /></Field>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <Field label="Commission %"><input type="number" style={s.input} value={commission} onChange={e => setCommission(e.target.value)} /></Field>
-          <Field label="Labour ₹"><input type="number" style={s.input} value={labour} onChange={e => setLabour(e.target.value)} /></Field>
-          <Field label="Transport ₹"><input type="number" style={s.input} value={transport} onChange={e => setTransport(e.target.value)} /></Field>
-          <Field label="Other Deductions ₹"><input type="number" style={s.input} value={otherDeductions} onChange={e => setOtherDeductions(e.target.value)} /></Field>
+
+        {/* ✅ Expense section clearly labeled */}
+        <div style={{ background: clr.card2, borderRadius: 10, padding: 12, marginBottom: 12, border: `1px solid ${clr.border}` }}>
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, color: clr.accent }}>💸 Expenses (GP-level — will split proportionally per lot)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="Commission %"><input type="number" style={s.input} value={commission} onChange={e => setCommission(e.target.value)} /></Field>
+            <Field label="Labour ₹ (total)"><input type="number" style={s.input} value={labour} onChange={e => setLabour(e.target.value)} /></Field>
+            <Field label="Transport ₹ (total)"><input type="number" style={s.input} value={transport} onChange={e => setTransport(e.target.value)} /></Field>
+            <Field label="Other ₹ (total)"><input type="number" style={s.input} value={otherDeductions} onChange={e => setOtherDeductions(e.target.value)} /></Field>
+          </div>
         </div>
+
         {lotSales.map((it, idx) => {
-          const calc = it.sale_rate ? calcLot(it) : null;
+          const calc = it.sale_rate ? calcLot(it, lotSales) : null;
           return (
             <div key={idx} style={{ ...s.card2, marginBottom: 8 }}>
               <div style={{ fontWeight: 700, color: clr.accent, marginBottom: 6 }}>LOT: {it.lot_id}</div>
@@ -586,15 +671,24 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
                 <Field label="Sale Rate ₹/kg"><input type="number" style={s.input} value={it.sale_rate} onChange={e => updateLotSale(idx, "sale_rate", e.target.value)} /></Field>
                 <Field label="Sale Weight kg"><input type="number" style={s.input} value={it.sale_weight} onChange={e => updateLotSale(idx, "sale_weight", e.target.value)} /></Field>
               </div>
+              {/* ✅ FIX: Full live preview with all expense lines */}
               {calc && (
                 <div style={{ background: clr.bg, borderRadius: 8, padding: 8, fontSize: 12 }}>
-                  <div style={s.rowBetween}><span style={{ color: clr.muted }}>Gross Sale</span><span>₹{fmt(calc.grossSale)}</span></div>
-                  <div style={s.rowBetween}><span style={{ color: clr.muted }}>Commission</span><span>-₹{fmt(calc.commAmt)}</span></div>
-                  <div style={s.rowBetween}><span style={{ color: clr.muted }}>Purchase Cost</span><span>₹{fmt(calc.purchaseCost)}</span></div>
+                  <div style={s.rowBetween}><span style={{ color: clr.muted }}>Gross Sale</span><span style={{ fontWeight: 700 }}>₹{fmt(calc.grossSale)}</span></div>
+                  <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Commission ({commission}%)</span><span>-₹{fmt(calc.commAmt)}</span></div>
+                  {calc.labAmt > 0 && <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Labour (proportional)</span><span>-₹{fmt(calc.labAmt)}</span></div>}
+                  {calc.tranAmt > 0 && <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Transport (proportional)</span><span>-₹{fmt(calc.tranAmt)}</span></div>}
+                  {calc.othAmt > 0 && <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Other (proportional)</span><span>-₹{fmt(calc.othAmt)}</span></div>}
+                  <div style={{ ...s.rowBetween, borderTop: `1px solid ${clr.border}`, marginTop: 4, paddingTop: 4, fontWeight: 700 }}>
+                    <span>Net Sale</span><span style={{ color: clr.blue }}>₹{fmt(calc.netSale)}</span>
+                  </div>
+                  <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Purchase Cost</span><span>-₹{fmt(calc.purchaseCost)}</span></div>
                   <div style={s.rowBetween}><span style={{ color: clr.muted }}>Weight Loss</span><span>{fmt(calc.weightLoss, 1)} kg</span></div>
-                  <div style={{ ...s.rowBetween, marginTop: 4, fontWeight: 800 }}>
+                  <div style={{ ...s.rowBetween, marginTop: 6, padding: "6px 8px", borderRadius: 6, background: calc.profitLoss >= 0 ? clr.green + "18" : clr.red + "18", fontWeight: 800 }}>
                     <span>P&L</span>
-                    <span style={{ color: calc.profitLoss >= 0 ? clr.green : clr.red }}>₹{fmt(calc.profitLoss)} {calc.profitLoss >= 0 ? "✅" : "🔴"}</span>
+                    <span style={{ color: calc.profitLoss >= 0 ? clr.green : clr.red, fontSize: 15 }}>
+                      {calc.profitLoss >= 0 ? "✅" : "🔴"} ₹{fmt(Math.abs(calc.profitLoss))} {calc.profitLoss >= 0 ? "Profit" : "Loss"}
+                    </span>
                   </div>
                 </div>
               )}
@@ -651,20 +745,26 @@ const StockScreen = ({ purchases, dispatches, sales }) => {
                 </div>
                 {dispItems.length > 0 && <>
                   <div style={{ fontWeight: 700, fontSize: 12, color: clr.green, margin: "8px 0 6px" }}>🚛 DISPATCHES</div>
-                  {dispItems.map((di, i) => (
-                    <div key={i} style={{ ...s.card2, fontSize: 12 }}>
-                      <div style={s.rowBetween}><span style={{ color: clr.green }}>GP: {di.gp_num}</span><span>{fmt(di.bags_loaded)} bags</span></div>
-                      <div style={{ color: clr.muted }}>{fmtDate(di.date)} · {di.vehicle || "No vehicle"} · {fmt(di.weight_loaded, 1)}kg</div>
-                    </div>
-                  ))}
+                  {dispItems.map((di, i) => {
+                    // ✅ Show loaded value in stock history too
+                    const loadedVal = ((parseFloat(di.bags_loaded) || 0) / (parseFloat(p.manual_bags) || 1)) * (p.total_amount || 0);
+                    return (
+                      <div key={i} style={{ ...s.card2, fontSize: 12 }}>
+                        <div style={s.rowBetween}><span style={{ color: clr.green }}>GP: {di.gp_num}</span><span>{fmt(di.bags_loaded)} bags</span></div>
+                        <div style={{ color: clr.muted }}>{fmtDate(di.date)} · {di.vehicle || "No vehicle"} · {fmt(di.weight_loaded, 1)}kg</div>
+                        <div style={s.rowBetween}><span style={{ color: clr.muted }}>Loaded Purchase Value</span><span style={{ color: clr.accent, fontWeight: 600 }}>₹{fmt(loadedVal)}</span></div>
+                      </div>
+                    );
+                  })}
                 </>}
                 {saleItems.length > 0 && <>
                   <div style={{ fontWeight: 700, fontSize: 12, color: clr.blue, margin: "8px 0 6px" }}>💰 SALES</div>
                   {saleItems.map((si, i) => (
                     <div key={i} style={{ ...s.card2, fontSize: 12 }}>
-                      <div style={s.rowBetween}><span style={{ color: clr.blue }}>GP: {si.gp_num}</span><span style={{ color: si.profitLoss >= 0 ? clr.green : clr.red }}>P&L: ₹{fmt(si.profitLoss)}</span></div>
-                      <div style={{ color: clr.muted }}>{fmtDate(si.date)} · Rate ₹{si.sale_rate}/kg · Net ₹{fmt(si.netSale)}</div>
-                      <div style={{ color: clr.muted }}>Wt Loss: {fmt(si.weightLoss, 1)}kg</div>
+                      <div style={s.rowBetween}><span style={{ color: clr.blue }}>GP: {si.gp_num}</span><span style={{ color: si.profitLoss >= 0 ? clr.green : clr.red }}>{si.profitLoss >= 0 ? "✅" : "🔴"} ₹{fmt(Math.abs(si.profitLoss))}</span></div>
+                      <div style={{ color: clr.muted }}>{fmtDate(si.date)} · Rate ₹{si.sale_rate}/kg</div>
+                      <div style={{ color: clr.muted }}>Gross: ₹{fmt(si.grossSale)} · Net: ₹{fmt(si.netSale)} · Wt Loss: {fmt(si.weightLoss, 1)}kg</div>
+                      <div style={{ color: clr.muted }}>Purchase Cost: ₹{fmt(si.purchaseCost)}</div>
                     </div>
                   ))}
                 </>}
@@ -918,7 +1018,8 @@ const SearchScreen = ({ purchases, dispatches, sales, payments, parties, mandis,
       const lotDispatches = dispatches.filter(d => (d.items || []).some(i => i.lot_id === lot.lot_id));
       const lotSalesAll = sales.flatMap(s => (s.lot_sales || []).map(ls => ({ ...ls, saleDate: s.date, party_id: s.party_id, gp_num: s.gp_num }))).filter(ls => ls.lot_id === lot.lot_id);
       const totalRevenue = lotSalesAll.reduce((t, ls) => t + (ls.netSale || 0), 0);
-      setResult({ type: "lot", lot, lotDispatches, lotSalesAll, totalRevenue, totalCost: lot.total_amount || 0, profitLoss: totalRevenue - (lot.total_amount || 0) });
+      const totalPL = lotSalesAll.reduce((t, ls) => t + (ls.profitLoss || 0), 0);
+      setResult({ type: "lot", lot, lotDispatches, lotSalesAll, totalRevenue, totalCost: lot.total_amount || 0, profitLoss: totalPL });
     } else if (filterType === "gp") {
       const gp = dispatches.find(d => d.gp_num.toLowerCase() === q);
       if (!gp) { setResult({ type: "not_found" }); return; }
@@ -974,8 +1075,8 @@ const SearchScreen = ({ purchases, dispatches, sales, payments, parties, mandis,
             <div style={{ fontSize: 13 }}>{result.lot.manual_bags} bags · ₹{fmt(result.lot.total_amount)}</div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Stat label="Revenue" value={`₹${fmt(result.totalRevenue)}`} color={clr.blue} />
-            <Stat label="Cost" value={`₹${fmt(result.totalCost)}`} color={clr.muted} />
+            <Stat label="Net Revenue" value={`₹${fmt(result.totalRevenue)}`} color={clr.blue} />
+            <Stat label="Purchase Cost" value={`₹${fmt(result.totalCost)}`} color={clr.muted} />
             <Stat label="P&L" value={`₹${fmt(Math.abs(result.profitLoss))}`} color={result.profitLoss >= 0 ? clr.green : clr.red} sub={result.profitLoss >= 0 ? "Profit ✅" : "Loss 🔴"} />
           </div>
         </div>
@@ -991,7 +1092,7 @@ const SearchScreen = ({ purchases, dispatches, sales, payments, parties, mandis,
         <div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
             <Stat label="Purchase" value={`₹${fmt(result.totalPurchase)}`} color={clr.blue} />
-            <Stat label="Sale" value={`₹${fmt(result.totalSale)}`} color={clr.green} />
+            <Stat label="Net Sale" value={`₹${fmt(result.totalSale)}`} color={clr.green} />
             <Stat label="P&L" value={`₹${fmt(Math.abs(result.totalPL))}`} color={result.totalPL >= 0 ? clr.green : clr.red} />
           </div>
         </div>
