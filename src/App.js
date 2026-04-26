@@ -213,7 +213,8 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, dispatch
 
   const save = async () => {
     if (!form.lot_id.trim()) { setErr("Lot ID required!"); return; }
-    if (!editId && purchases.find(p => p.lot_id === form.lot_id.trim())) { setErr("Lot ID already exists!"); return; }
+    // Prevent duplicate Lot ID safely checking against editId
+    if (purchases.find(p => p.lot_id === form.lot_id.trim() && p.id !== editId)) { setErr("Lot ID already exists!"); return; }
     if (!form.kisan_name.trim()) { setErr("Kisan name required"); return; }
     const item = { ...form, id: editId || uid(), lot_id: form.lot_id.trim(), std_bags: parseFloat(stdBags), total_amount: totalAmt };
     if (editId) await ops.purchases.editItem(item);
@@ -223,34 +224,34 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, dispatch
 
   const openEdit = (item) => { setForm({ ...item }); setEditId(item.id); setShowForm(true); };
 
+  // CASCADE DELETE LOGIC
   const del = async (id) => {
-  const lot = purchases.find(x => x.id === id);
-  if (!lot) return;
+    const lot = purchases.find(x => x.id === id);
+    if (!lot) return;
+    await ops.purchases.deleteItem(id);
+    for (const d of dispatches) {
+      const hasLot = (d.items || []).some(i => i.lot_id === lot.lot_id);
+      if (!hasLot) continue;
 
-  const affectedDispatchIds = [];
-
-  for (const d of dispatches) {
-    const newItems = (d.items || []).filter(i => i.lot_id !== lot.lot_id);
-
-    if (newItems.length !== (d.items || []).length) {
-      affectedDispatchIds.push(d.id);
-
+      const newItems = (d.items || []).filter(i => i.lot_id !== lot.lot_id);
       if (newItems.length === 0) {
         await ops.dispatches.deleteItem(d.id);
+        const linkedSale = sales.find(s => s.gp_id === d.id);
+        if (linkedSale) await ops.sales.deleteItem(linkedSale.id);
       } else {
         await ops.dispatches.editItem({ ...d, items: newItems });
+        const linkedSale = sales.find(s => s.gp_id === d.id);
+        if (linkedSale) {
+          const newLotSales = (linkedSale.lot_sales || []).filter(ls => ls.lot_id !== lot.lot_id);
+          if (newLotSales.length === 0) {
+            await ops.sales.deleteItem(linkedSale.id);
+          } else {
+            await ops.sales.editItem({ ...linkedSale, lot_sales: newLotSales });
+          }
+        }
       }
     }
-  }
-
-  for (const sale of sales) {
-    if (affectedDispatchIds.includes(sale.gp_id)) {
-      await ops.sales.deleteItem(sale.id);
-    }
-  }
-
-  await ops.purchases.deleteItem(id);
-};
+  };
 
   return (
     <div>
@@ -346,7 +347,7 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, dispatch
 };
 
 // ─── DISPATCH ─────────────────────────────────────────────────────────────────
-const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
+const DispatchScreen = ({ dispatches, purchases, mandis, parties, sales, ops }) => {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
   const [gpNum, setGpNum] = useState(""); const [vehicle, setVehicle] = useState(""); const [date, setDate] = useState(today());
@@ -362,7 +363,6 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
     return (parseFloat(lot.manual_bags) || 0) - dispatched;
   };
 
-  // ✅ FIX: Calculate proportional purchase value for a dispatch item
   const getLoadedValue = (it) => {
     const lot = purchases.find(p => p.lot_id === it.lot_id);
     if (!lot) return 0;
@@ -386,9 +386,16 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
 
   const save = async () => {
     if (!gpNum.trim()) { setErr("Gate Pass number required!"); return; }
-    if (!editId && dispatches.find(d => d.gp_num === gpNum.trim())) { setErr("Gate Pass already exists!"); return; }
+    if (dispatches.find(d => d.gp_num === gpNum.trim() && d.id !== editId)) { setErr("Gate Pass already exists!"); return; }
     if (!mandiId || !partyId) { setErr("Mandi and Party required!"); return; }
-    for (const it of items) { if (!it.lot_id) { setErr("Select lot for all rows"); return; } }
+    for (const it of items) { 
+      if (!it.lot_id) { setErr("Select lot for all rows"); return; } 
+      const avail = getAvailableBags(it.lot_id, editId);
+      if (parseFloat(it.bags_loaded) > avail) {
+        setErr(`Cannot dispatch more than available bags for Lot ${it.lot_id}! (Available: ${avail})`);
+        return;
+      }
+    }
     const gp = { id: editId || uid(), gp_num: gpNum.trim(), vehicle, date, mandi_id: mandiId, party_id: partyId, items };
     if (editId) await ops.dispatches.editItem(gp);
     else await ops.dispatches.addItem(gp);
@@ -396,7 +403,13 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
   };
 
   const openEdit = (d) => { setGpNum(d.gp_num); setVehicle(d.vehicle || ""); setDate(d.date); setMandiId(d.mandi_id); setPartyId(d.party_id); setItems(d.items || []); setEditId(d.id); setShowForm(true); };
-  const del = async (id) => await ops.dispatches.deleteItem(id);
+  
+  // CASCADE DELETE LOGIC
+  const del = async (id) => {
+    await ops.dispatches.deleteItem(id);
+    const linkedSale = sales.find(s => s.gp_id === id);
+    if (linkedSale) await ops.sales.deleteItem(linkedSale.id);
+  };
 
   return (
     <div>
@@ -409,7 +422,6 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
         {[...dispatches].reverse().map(d => {
           const totalBags = (d.items || []).reduce((s, i) => s + (parseFloat(i.bags_loaded) || 0), 0);
           const totalWt = (d.items || []).reduce((s, i) => s + (parseFloat(i.weight_loaded) || 0), 0);
-          // ✅ FIX: Total loaded purchase value for entire vehicle
           const totalLoadedValue = (d.items || []).reduce((s, it) => s + getLoadedValue(it), 0);
           return (
             <div key={d.id} style={s.card}>
@@ -425,7 +437,6 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
                 <div style={{ fontSize: 12, color: clr.muted }}>{getName(mandis, d.mandi_id)} · {getName(parties, d.party_id)} · {fmtDate(d.date)}</div>
               </div>
               <div style={s.divider} />
-              {/* ✅ FIX: Per-lot loaded value shown */}
               {(d.items || []).map((it, idx) => {
                 const loadedVal = getLoadedValue(it);
                 return (
@@ -441,7 +452,6 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
                   </div>
                 );
               })}
-              {/* ✅ FIX: Vehicle total with loaded value */}
               <div style={{ marginTop: 8, background: clr.green + "18", borderRadius: 8, padding: "8px 12px" }}>
                 <div style={s.rowBetween}>
                   <span style={{ fontSize: 12, color: clr.muted }}>कुल (Total)</span>
@@ -535,18 +545,15 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
 
   const updateLotSale = (idx, key, val) => setLotSales(p => p.map((it, i) => i === idx ? { ...it, [key]: val } : it));
 
-  // ✅ CORE FIX: Proportional expense split by weight + correct P&L
   const calcLot = (it, allLotSales) => {
     const lot = purchases.find(p => p.lot_id === it.lot_id);
     const grossSale = (parseFloat(it.sale_rate) || 0) * (parseFloat(it.sale_weight) || 0);
     const commAmt = grossSale * (parseFloat(commission) || 0) / 100;
 
-    // Total sale weight across all lots in this GP for proportional split
     const totalGpSaleWeight = (allLotSales || lotSales).reduce((s, l) => s + (parseFloat(l.sale_weight) || 0), 0);
     const thisLotWeight = parseFloat(it.sale_weight) || 0;
     const proportion = totalGpSaleWeight > 0 ? thisLotWeight / totalGpSaleWeight : 1;
 
-    // ✅ Fixed expenses split proportionally by weight
     const labAmt   = (parseFloat(labour) || 0) * proportion;
     const tranAmt  = (parseFloat(transport) || 0) * proportion;
     const othAmt   = (parseFloat(otherDeductions) || 0) * proportion;
@@ -554,7 +561,6 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
     const totalExpenses = commAmt + labAmt + tranAmt + othAmt;
     const netSale = grossSale - totalExpenses;
 
-    // ✅ Proportional purchase cost (bags-based)
     const dispBags = parseFloat(it.bags_loaded) || 0;
     const totalLotBags = parseFloat(lot?.manual_bags) || 1;
     const purchaseCost = (dispBags / totalLotBags) * (lot?.total_amount || 0);
@@ -574,7 +580,13 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
 
   const save = async () => {
     if (!gpId) { setErr("Select Gate Pass"); return; }
-    for (const it of lotSales) { if (!it.sale_rate) { setErr("Fill sale rate for all lots"); return; } }
+    for (const it of lotSales) { 
+      if (!it.sale_rate) { setErr("Fill sale rate for all lots"); return; } 
+      if (parseFloat(it.sale_weight) > parseFloat(it.weight_loaded)) {
+        setErr(`Sale weight cannot exceed dispatched weight for Lot ${it.lot_id}! (Max: ${it.weight_loaded} kg)`);
+        return;
+      }
+    }
     const gp = dispatches.find(d => d.id === gpId);
     const saleData = {
       id: editId || uid(), gp_id: gpId, gp_num: gp?.gp_num, party_id: gp?.party_id, mandi_id: gp?.mandi_id,
@@ -616,7 +628,6 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
               </div>
               <div style={{ fontSize: 12, color: clr.muted, marginTop: 4 }}>{getName(parties, sale.party_id)} · {getName(mandis, sale.mandi_id)} · {fmtDate(sale.date)}</div>
 
-              {/* ✅ FIX: GP-level expense summary */}
               <div style={{ background: clr.bg, borderRadius: 8, padding: "8px 10px", marginTop: 8, fontSize: 12 }}>
                 <div style={s.rowBetween}><span style={{ color: clr.muted }}>Gross Sale</span><span style={{ fontWeight: 700 }}>₹{fmt(totalGross)}</span></div>
                 <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Total Expenses</span><span style={{ color: clr.red }}>-₹{fmt(totalExpenses)}</span></div>
@@ -635,7 +646,6 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
                       {ls.profitLoss >= 0 ? "✅" : "🔴"} ₹{fmt(Math.abs(ls.profitLoss))}
                     </span>
                   </div>
-                  {/* ✅ FIX: Full breakdown per lot */}
                   <div style={{ fontSize: 11, color: clr.muted, marginTop: 4 }}>
                     <div style={s.rowBetween}><span>Gross Sale ({fmt(ls.sale_weight,1)}kg × ₹{ls.sale_rate})</span><span>₹{fmt(ls.grossSale)}</span></div>
                     <div style={s.rowBetween}><span>Commission ({sale.commission}%)</span><span>-₹{fmt(ls.commAmt)}</span></div>
@@ -666,7 +676,6 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
         </Field>
         <Field label="Sale Date"><input type="date" style={s.input} value={saleDate} onChange={e => setSaleDate(e.target.value)} /></Field>
 
-        {/* ✅ Expense section clearly labeled */}
         <div style={{ background: clr.card2, borderRadius: 10, padding: 12, marginBottom: 12, border: `1px solid ${clr.border}` }}>
           <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, color: clr.accent }}>💸 Expenses (GP-level — will split proportionally per lot)</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -687,7 +696,6 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
                 <Field label="Sale Rate ₹/kg"><input type="number" style={s.input} value={it.sale_rate} onChange={e => updateLotSale(idx, "sale_rate", e.target.value)} /></Field>
                 <Field label="Sale Weight kg"><input type="number" style={s.input} value={it.sale_weight} onChange={e => updateLotSale(idx, "sale_weight", e.target.value)} /></Field>
               </div>
-              {/* ✅ FIX: Full live preview with all expense lines */}
               {calc && (
                 <div style={{ background: clr.bg, borderRadius: 8, padding: 8, fontSize: 12 }}>
                   <div style={s.rowBetween}><span style={{ color: clr.muted }}>Gross Sale</span><span style={{ fontWeight: 700 }}>₹{fmt(calc.grossSale)}</span></div>
@@ -762,7 +770,6 @@ const StockScreen = ({ purchases, dispatches, sales }) => {
                 {dispItems.length > 0 && <>
                   <div style={{ fontWeight: 700, fontSize: 12, color: clr.green, margin: "8px 0 6px" }}>🚛 DISPATCHES</div>
                   {dispItems.map((di, i) => {
-                    // ✅ Show loaded value in stock history too
                     const loadedVal = ((parseFloat(di.bags_loaded) || 0) / (parseFloat(p.manual_bags) || 1)) * (p.total_amount || 0);
                     return (
                       <div key={i} style={{ ...s.card2, fontSize: 12 }}>
@@ -798,6 +805,7 @@ const StockScreen = ({ purchases, dispatches, sales }) => {
 const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, dispatches, ops }) => {
   const [tab, setTab] = useState("receivable");
   const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
   const [selectedProfile, setSelectedProfile] = useState(null);
   const [form, setForm] = useState({ type: "receivable", party_id: "", cold_id: "", amount: "", date: today(), notes: "", pay_mode: "Cash" });
   const getName = (arr, id) => arr.find(x => x.id === id)?.name || "-";
@@ -810,18 +818,32 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
   };
 
   const getPayable = (cold_id) => {
+    // Dynamic Active Purchases calculation naturally ignores deleted purchases
     const coldLots = purchases.filter(p => p.cold_storage_id === cold_id);
     const total = coldLots.reduce((t, l) => t + (l.total_amount || 0), 0);
     const paid = payments.filter(p => p.type === "payable" && p.cold_id === cold_id).reduce((t, p) => t + (parseFloat(p.amount) || 0), 0);
     return { total, paid, pending: total - paid, lots: coldLots };
   };
 
+  const openEdit = (pm) => {
+    setForm({ type: pm.type, party_id: pm.party_id || "", cold_id: pm.cold_id || "", amount: pm.amount, date: pm.date, notes: pm.notes || "", pay_mode: pm.pay_mode || "Cash" });
+    setEditId(pm.id);
+    setShowForm(true);
+  };
+
+  const del = async (id) => await ops.payments.deleteItem(id);
+
   const save = async () => {
     if (!form.amount) return;
     if (form.type === "receivable" && !form.party_id) return;
     if (form.type === "payable" && !form.cold_id) return;
-    await ops.payments.addItem({ id: uid(), ...form, amount: parseFloat(form.amount) });
-    setShowForm(false);
+    const payload = { ...form, amount: parseFloat(form.amount) };
+    if (editId) {
+      await ops.payments.editItem({ id: editId, ...payload });
+    } else {
+      await ops.payments.addItem({ id: uid(), ...payload });
+    }
+    setShowForm(false); setEditId(null);
     setForm({ type: "receivable", party_id: "", cold_id: "", amount: "", date: today(), notes: "", pay_mode: "Cash" });
   };
 
@@ -836,7 +858,7 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
       const partyPayments = payments.filter(p => p.type === "receivable" && p.party_id === entity.id);
       const ledger = [
         ...partySales.flatMap(s => (s.lot_sales || []).map(ls => ({ date: s.date, type: "sale", label: `GP: ${s.gp_num} · LOT: ${ls.lot_id}`, amount: ls.netSale || 0 }))),
-        ...partyPayments.map(pm => ({ date: pm.date, type: "payment", label: `Received · ${pm.pay_mode || "Cash"} · ${pm.notes || ""}`, amount: pm.amount }))
+        ...partyPayments.map(pm => ({ id: pm.id, raw: pm, isPayment: true, date: pm.date, type: "payment", label: `Received · ${pm.pay_mode || "Cash"} · ${pm.notes || ""}`, amount: pm.amount }))
       ].sort((a, b) => new Date(a.date) - new Date(b.date));
       let running = 0;
       return (
@@ -862,17 +884,30 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
                     <div style={{ textAlign: "right" }}>
                       <div style={{ fontWeight: 700, color: entry.type === "sale" ? clr.red : clr.green, fontSize: 13 }}>{entry.type === "sale" ? `+₹${fmt(entry.amount)}` : `-₹${fmt(entry.amount)}`}</div>
                       <div style={{ fontSize: 11, color: clr.muted }}>Bal: ₹{fmt(running)}</div>
+                      {entry.isPayment && (
+                        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 4 }}>
+                          <button onClick={() => openEdit(entry.raw)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Icon name="edit" size={13} color={clr.blue} /></button>
+                          <button onClick={() => del(entry.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Icon name="trash" size={13} color={clr.red} /></button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
               );
             })}
-            <button onClick={() => { setForm(p => ({ ...p, type: "receivable", party_id: entity.id })); setShowForm(true); }} style={{ ...s.btn(), width: "100%", marginTop: 8 }}>+ Add Payment</button>
+            <button onClick={() => { setForm(p => ({ ...p, type: "receivable", party_id: entity.id })); setEditId(null); setShowForm(true); }} style={{ ...s.btn(), width: "100%", marginTop: 8 }}>+ Add Payment</button>
           </div>
-          <Modal open={showForm} onClose={() => setShowForm(false)} title="Add Payment">
+          <Modal open={showForm} onClose={() => { setShowForm(false); setEditId(null); setForm({ type: "receivable", party_id: "", cold_id: "", amount: "", date: today(), notes: "", pay_mode: "Cash" }); }} title={editId ? "Edit Payment" : "Add Payment"}>
+            <Field label="Payment Mode">
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {PMODES.map(m => (
+                  <button key={m} onClick={() => f("pay_mode", m)} style={{ ...s.btnSm(form.pay_mode === m ? clr.accent + "33" : clr.card2, form.pay_mode === m ? clr.accent : clr.text) }}>{m}</button>
+                ))}
+              </div>
+            </Field>
             <Field label="Amount ₹"><input type="number" style={s.input} value={form.amount} onChange={e => f("amount", e.target.value)} /></Field>
             <Field label="Date"><input type="date" style={s.input} value={form.date} onChange={e => f("date", e.target.value)} /></Field>
-            <Field label="Notes"><input style={s.input} value={form.notes} onChange={e => f("notes", e.target.value)} /></Field>
+            <Field label="Notes / Ref"><input style={s.input} value={form.notes} onChange={e => f("notes", e.target.value)} /></Field>
             <button onClick={save} style={{ ...s.btn(), width: "100%", marginTop: 4 }}>Save</button>
           </Modal>
         </div>
@@ -883,7 +918,7 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
       let running = 0;
       const ledger = [
         ...r.lots.map(l => ({ date: l.date, type: "purchase", label: `LOT: ${l.lot_id} · ${l.kisan_name}`, amount: l.total_amount || 0 })),
-        ...coldPayments.map(pm => ({ date: pm.date, type: "payment", label: `Paid · ${pm.pay_mode || "Cash"} · ${pm.notes || ""}`, amount: pm.amount }))
+        ...coldPayments.map(pm => ({ id: pm.id, raw: pm, isPayment: true, date: pm.date, type: "payment", label: `Paid · ${pm.pay_mode || "Cash"} · ${pm.notes || ""}`, amount: pm.amount }))
       ].sort((a, b) => new Date(a.date) - new Date(b.date));
       return (
         <div>
@@ -908,6 +943,12 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
                     <div style={{ textAlign: "right" }}>
                       <div style={{ fontWeight: 700, color: entry.type === "purchase" ? clr.red : clr.green, fontSize: 13 }}>{entry.type === "purchase" ? `+₹${fmt(entry.amount)}` : `-₹${fmt(entry.amount)}`}</div>
                       <div style={{ fontSize: 11, color: clr.muted }}>Bal: ₹{fmt(running)}</div>
+                      {entry.isPayment && (
+                        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 4 }}>
+                          <button onClick={() => openEdit(entry.raw)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Icon name="edit" size={13} color={clr.blue} /></button>
+                          <button onClick={() => del(entry.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}><Icon name="trash" size={13} color={clr.red} /></button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -919,12 +960,19 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
                 <div style={{ fontSize: 12, color: clr.muted }}>{lot.kisan_name} · {fmtDate(lot.date)}</div>
               </div>
             ))}
-            <button onClick={() => { setForm(p => ({ ...p, type: "payable", cold_id: entity.id })); setShowForm(true); }} style={{ ...s.btn(), width: "100%", marginTop: 8 }}>+ Add Payment</button>
+            <button onClick={() => { setForm(p => ({ ...p, type: "payable", cold_id: entity.id })); setEditId(null); setShowForm(true); }} style={{ ...s.btn(), width: "100%", marginTop: 8 }}>+ Add Payment</button>
           </div>
-          <Modal open={showForm} onClose={() => setShowForm(false)} title="Add Payment">
+          <Modal open={showForm} onClose={() => { setShowForm(false); setEditId(null); setForm({ type: "receivable", party_id: "", cold_id: "", amount: "", date: today(), notes: "", pay_mode: "Cash" }); }} title={editId ? "Edit Payment" : "Add Payment"}>
+            <Field label="Payment Mode">
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {PMODES.map(m => (
+                  <button key={m} onClick={() => f("pay_mode", m)} style={{ ...s.btnSm(form.pay_mode === m ? clr.accent + "33" : clr.card2, form.pay_mode === m ? clr.accent : clr.text) }}>{m}</button>
+                ))}
+              </div>
+            </Field>
             <Field label="Amount ₹"><input type="number" style={s.input} value={form.amount} onChange={e => f("amount", e.target.value)} /></Field>
             <Field label="Date"><input type="date" style={s.input} value={form.date} onChange={e => f("date", e.target.value)} /></Field>
-            <Field label="Notes"><input style={s.input} value={form.notes} onChange={e => f("notes", e.target.value)} /></Field>
+            <Field label="Notes / Ref"><input style={s.input} value={form.notes} onChange={e => f("notes", e.target.value)} /></Field>
             <button onClick={save} style={{ ...s.btn(), width: "100%", marginTop: 4 }}>Save</button>
           </Modal>
         </div>
@@ -936,7 +984,7 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
     <div>
       <div style={{ padding: "12px 16px 0", ...s.rowBetween }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>💳 Payments</span>
-        <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={16} color="#000" /> Add</button>
+        <button onClick={() => { setEditId(null); setShowForm(true); }} style={s.btn()}><Icon name="add" size={16} color="#000" /> Add</button>
       </div>
       <div style={{ display: "flex", margin: "12px 16px 0" }}>
         {["receivable", "payable"].map(t => (
@@ -981,7 +1029,7 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
           );
         })}
       </div>
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Add Payment">
+      <Modal open={showForm} onClose={() => { setShowForm(false); setEditId(null); setForm({ type: "receivable", party_id: "", cold_id: "", amount: "", date: today(), notes: "", pay_mode: "Cash" }); }} title={editId ? "Edit Payment" : "Add Payment"}>
         <Field label="Type">
           <div style={s.row}>
             {["receivable", "payable"].map(t => (
