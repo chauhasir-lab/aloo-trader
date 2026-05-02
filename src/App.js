@@ -5,7 +5,6 @@ const SUPABASE_URL = "https://cxjmwjljjnuthcrmnbqb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN4am13amxqam51dGhjcm1uYnFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwOTYzMzUsImV4cCI6MjA5MjY3MjMzNX0.ynRaceAT1uWcsPOJ_5vY_8NKolM3EaWKQajUEk4sLz8";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ─── SUPABASE HOOKS ───────────────────────────────────────────────────────────
 const useSupabaseTable = (tableName, defaultValue = []) => {
   const [data, setData] = useState(defaultValue);
   const [loading, setLoading] = useState(true);
@@ -213,7 +212,6 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, dispatch
 
   const save = async () => {
     if (!form.lot_id.trim()) { setErr("Lot ID required!"); return; }
-    // Prevent duplicate Lot ID safely checking against editId
     if (purchases.find(p => p.lot_id === form.lot_id.trim() && p.id !== editId)) { setErr("Lot ID already exists!"); return; }
     if (!form.kisan_name.trim()) { setErr("Kisan name required"); return; }
     const item = { ...form, id: editId || uid(), lot_id: form.lot_id.trim(), std_bags: parseFloat(stdBags), total_amount: totalAmt };
@@ -224,15 +222,32 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, dispatch
 
   const openEdit = (item) => { setForm({ ...item }); setEditId(item.id); setShowForm(true); };
 
-  // CASCADE DELETE LOGIC
+  // ── CASCADE DELETE: purchase → dispatches → sales → payments (payable) ──
   const del = async (id) => {
     const lot = purchases.find(x => x.id === id);
     if (!lot) return;
+
+    // 1. Delete linked payable payments for this cold storage lot
+    const linkedPayments = payments.filter(
+      pm => pm.type === "payable" && pm.cold_id === lot.cold_storage_id
+    );
+    // Only delete if this is the only lot for that cold storage
+    const otherLotsForSameCold = purchases.filter(
+      p => p.id !== id && p.cold_storage_id === lot.cold_storage_id
+    );
+    if (otherLotsForSameCold.length === 0) {
+      for (const pm of linkedPayments) {
+        await ops.payments.deleteItem(pm.id);
+      }
+    }
+
+    // 2. Delete the purchase
     await ops.purchases.deleteItem(id);
+
+    // 3. Handle dispatches that had this lot
     for (const d of dispatches) {
       const hasLot = (d.items || []).some(i => i.lot_id === lot.lot_id);
       if (!hasLot) continue;
-
       const newItems = (d.items || []).filter(i => i.lot_id !== lot.lot_id);
       if (newItems.length === 0) {
         await ops.dispatches.deleteItem(d.id);
@@ -388,8 +403,8 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, sales, ops }) 
     if (!gpNum.trim()) { setErr("Gate Pass number required!"); return; }
     if (dispatches.find(d => d.gp_num === gpNum.trim() && d.id !== editId)) { setErr("Gate Pass already exists!"); return; }
     if (!mandiId || !partyId) { setErr("Mandi and Party required!"); return; }
-    for (const it of items) { 
-      if (!it.lot_id) { setErr("Select lot for all rows"); return; } 
+    for (const it of items) {
+      if (!it.lot_id) { setErr("Select lot for all rows"); return; }
       const avail = getAvailableBags(it.lot_id, editId);
       if (parseFloat(it.bags_loaded) > avail) {
         setErr(`Cannot dispatch more than available bags for Lot ${it.lot_id}! (Available: ${avail})`);
@@ -403,8 +418,7 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, sales, ops }) 
   };
 
   const openEdit = (d) => { setGpNum(d.gp_num); setVehicle(d.vehicle || ""); setDate(d.date); setMandiId(d.mandi_id); setPartyId(d.party_id); setItems(d.items || []); setEditId(d.id); setShowForm(true); };
-  
-  // CASCADE DELETE LOGIC
+
   const del = async (id) => {
     await ops.dispatches.deleteItem(id);
     const linkedSale = sales.find(s => s.gp_id === id);
@@ -549,25 +563,19 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
     const lot = purchases.find(p => p.lot_id === it.lot_id);
     const grossSale = (parseFloat(it.sale_rate) || 0) * (parseFloat(it.sale_weight) || 0);
     const commAmt = grossSale * (parseFloat(commission) || 0) / 100;
-
     const totalGpSaleWeight = (allLotSales || lotSales).reduce((s, l) => s + (parseFloat(l.sale_weight) || 0), 0);
     const thisLotWeight = parseFloat(it.sale_weight) || 0;
     const proportion = totalGpSaleWeight > 0 ? thisLotWeight / totalGpSaleWeight : 1;
-
-    const labAmt   = (parseFloat(labour) || 0) * proportion;
-    const tranAmt  = (parseFloat(transport) || 0) * proportion;
-    const othAmt   = (parseFloat(otherDeductions) || 0) * proportion;
-
+    const labAmt = (parseFloat(labour) || 0) * proportion;
+    const tranAmt = (parseFloat(transport) || 0) * proportion;
+    const othAmt = (parseFloat(otherDeductions) || 0) * proportion;
     const totalExpenses = commAmt + labAmt + tranAmt + othAmt;
     const netSale = grossSale - totalExpenses;
-
     const dispBags = parseFloat(it.bags_loaded) || 0;
     const totalLotBags = parseFloat(lot?.manual_bags) || 1;
     const purchaseCost = (dispBags / totalLotBags) * (lot?.total_amount || 0);
-
     const weightLoss = (parseFloat(it.weight_loaded) || 0) - (parseFloat(it.sale_weight) || 0);
     const profitLoss = netSale - purchaseCost;
-
     return { grossSale, commAmt, labAmt, tranAmt, othAmt, totalExpenses, netSale, purchaseCost, weightLoss, profitLoss, proportion };
   };
 
@@ -580,10 +588,10 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
 
   const save = async () => {
     if (!gpId) { setErr("Select Gate Pass"); return; }
-    for (const it of lotSales) { 
-      if (!it.sale_rate) { setErr("Fill sale rate for all lots"); return; } 
+    for (const it of lotSales) {
+      if (!it.sale_rate) { setErr("Fill sale rate for all lots"); return; }
       if (parseFloat(it.sale_weight) > parseFloat(it.weight_loaded)) {
-        setErr(`Sale weight cannot exceed dispatched weight for Lot ${it.lot_id}! (Max: ${it.weight_loaded} kg)`);
+        setErr(`Sale weight cannot exceed dispatched weight for Lot ${it.lot_id}!`);
         return;
       }
     }
@@ -627,7 +635,6 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
                 </div>
               </div>
               <div style={{ fontSize: 12, color: clr.muted, marginTop: 4 }}>{getName(parties, sale.party_id)} · {getName(mandis, sale.mandi_id)} · {fmtDate(sale.date)}</div>
-
               <div style={{ background: clr.bg, borderRadius: 8, padding: "8px 10px", marginTop: 8, fontSize: 12 }}>
                 <div style={s.rowBetween}><span style={{ color: clr.muted }}>Gross Sale</span><span style={{ fontWeight: 700 }}>₹{fmt(totalGross)}</span></div>
                 <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Total Expenses</span><span style={{ color: clr.red }}>-₹{fmt(totalExpenses)}</span></div>
@@ -636,7 +643,6 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
                   <span style={{ fontWeight: 800, color: clr.blue }}>₹{fmt(totalNet)}</span>
                 </div>
               </div>
-
               <div style={s.divider} />
               {(sale.lot_sales || []).map((ls, i) => (
                 <div key={i} style={{ ...s.card2, marginBottom: 6 }}>
@@ -647,7 +653,7 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: clr.muted, marginTop: 4 }}>
-                    <div style={s.rowBetween}><span>Gross Sale ({fmt(ls.sale_weight,1)}kg × ₹{ls.sale_rate})</span><span>₹{fmt(ls.grossSale)}</span></div>
+                    <div style={s.rowBetween}><span>Gross Sale ({fmt(ls.sale_weight, 1)}kg × ₹{ls.sale_rate})</span><span>₹{fmt(ls.grossSale)}</span></div>
                     <div style={s.rowBetween}><span>Commission ({sale.commission}%)</span><span>-₹{fmt(ls.commAmt)}</span></div>
                     {ls.labAmt > 0 && <div style={s.rowBetween}><span>Labour (prop.)</span><span>-₹{fmt(ls.labAmt)}</span></div>}
                     {ls.tranAmt > 0 && <div style={s.rowBetween}><span>Transport (prop.)</span><span>-₹{fmt(ls.tranAmt)}</span></div>}
@@ -675,9 +681,8 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
           </select>
         </Field>
         <Field label="Sale Date"><input type="date" style={s.input} value={saleDate} onChange={e => setSaleDate(e.target.value)} /></Field>
-
         <div style={{ background: clr.card2, borderRadius: 10, padding: 12, marginBottom: 12, border: `1px solid ${clr.border}` }}>
-          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, color: clr.accent }}>💸 Expenses (GP-level — will split proportionally per lot)</div>
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, color: clr.accent }}>💸 Expenses (GP-level)</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <Field label="Commission %"><input type="number" style={s.input} value={commission} onChange={e => setCommission(e.target.value)} /></Field>
             <Field label="Labour ₹ (total)"><input type="number" style={s.input} value={labour} onChange={e => setLabour(e.target.value)} /></Field>
@@ -685,7 +690,6 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
             <Field label="Other ₹ (total)"><input type="number" style={s.input} value={otherDeductions} onChange={e => setOtherDeductions(e.target.value)} /></Field>
           </div>
         </div>
-
         {lotSales.map((it, idx) => {
           const calc = it.sale_rate ? calcLot(it, lotSales) : null;
           return (
@@ -700,9 +704,9 @@ const SaleScreen = ({ sales, dispatches, purchases, parties, mandis, ops }) => {
                 <div style={{ background: clr.bg, borderRadius: 8, padding: 8, fontSize: 12 }}>
                   <div style={s.rowBetween}><span style={{ color: clr.muted }}>Gross Sale</span><span style={{ fontWeight: 700 }}>₹{fmt(calc.grossSale)}</span></div>
                   <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Commission ({commission}%)</span><span>-₹{fmt(calc.commAmt)}</span></div>
-                  {calc.labAmt > 0 && <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Labour (proportional)</span><span>-₹{fmt(calc.labAmt)}</span></div>}
-                  {calc.tranAmt > 0 && <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Transport (proportional)</span><span>-₹{fmt(calc.tranAmt)}</span></div>}
-                  {calc.othAmt > 0 && <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Other (proportional)</span><span>-₹{fmt(calc.othAmt)}</span></div>}
+                  {calc.labAmt > 0 && <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Labour</span><span>-₹{fmt(calc.labAmt)}</span></div>}
+                  {calc.tranAmt > 0 && <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Transport</span><span>-₹{fmt(calc.tranAmt)}</span></div>}
+                  {calc.othAmt > 0 && <div style={s.rowBetween}><span style={{ color: clr.muted }}>(-) Other</span><span>-₹{fmt(calc.othAmt)}</span></div>}
                   <div style={{ ...s.rowBetween, borderTop: `1px solid ${clr.border}`, marginTop: 4, paddingTop: 4, fontWeight: 700 }}>
                     <span>Net Sale</span><span style={{ color: clr.blue }}>₹{fmt(calc.netSale)}</span>
                   </div>
@@ -818,7 +822,6 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
   };
 
   const getPayable = (cold_id) => {
-    // Dynamic Active Purchases calculation naturally ignores deleted purchases
     const coldLots = purchases.filter(p => p.cold_storage_id === cold_id);
     const total = coldLots.reduce((t, l) => t + (l.total_amount || 0), 0);
     const paid = payments.filter(p => p.type === "payable" && p.cold_id === cold_id).reduce((t, p) => t + (parseFloat(p.amount) || 0), 0);
@@ -900,9 +903,7 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
           <Modal open={showForm} onClose={() => { setShowForm(false); setEditId(null); setForm({ type: "receivable", party_id: "", cold_id: "", amount: "", date: today(), notes: "", pay_mode: "Cash" }); }} title={editId ? "Edit Payment" : "Add Payment"}>
             <Field label="Payment Mode">
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {PMODES.map(m => (
-                  <button key={m} onClick={() => f("pay_mode", m)} style={{ ...s.btnSm(form.pay_mode === m ? clr.accent + "33" : clr.card2, form.pay_mode === m ? clr.accent : clr.text) }}>{m}</button>
-                ))}
+                {PMODES.map(m => <button key={m} onClick={() => f("pay_mode", m)} style={{ ...s.btnSm(form.pay_mode === m ? clr.accent + "33" : clr.card2, form.pay_mode === m ? clr.accent : clr.text) }}>{m}</button>)}
               </div>
             </Field>
             <Field label="Amount ₹"><input type="number" style={s.input} value={form.amount} onChange={e => f("amount", e.target.value)} /></Field>
@@ -965,9 +966,7 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
           <Modal open={showForm} onClose={() => { setShowForm(false); setEditId(null); setForm({ type: "receivable", party_id: "", cold_id: "", amount: "", date: today(), notes: "", pay_mode: "Cash" }); }} title={editId ? "Edit Payment" : "Add Payment"}>
             <Field label="Payment Mode">
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {PMODES.map(m => (
-                  <button key={m} onClick={() => f("pay_mode", m)} style={{ ...s.btnSm(form.pay_mode === m ? clr.accent + "33" : clr.card2, form.pay_mode === m ? clr.accent : clr.text) }}>{m}</button>
-                ))}
+                {PMODES.map(m => <button key={m} onClick={() => f("pay_mode", m)} style={{ ...s.btnSm(form.pay_mode === m ? clr.accent + "33" : clr.card2, form.pay_mode === m ? clr.accent : clr.text) }}>{m}</button>)}
               </div>
             </Field>
             <Field label="Amount ₹"><input type="number" style={s.input} value={form.amount} onChange={e => f("amount", e.target.value)} /></Field>
@@ -1056,9 +1055,7 @@ const PaymentScreen = ({ payments, purchases, sales, parties, coldStorages, disp
         )}
         <Field label="Payment Mode">
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {PMODES.map(m => (
-              <button key={m} onClick={() => f("pay_mode", m)} style={{ ...s.btnSm(form.pay_mode === m ? clr.accent + "33" : clr.card2, form.pay_mode === m ? clr.accent : clr.text) }}>{m}</button>
-            ))}
+            {PMODES.map(m => <button key={m} onClick={() => f("pay_mode", m)} style={{ ...s.btnSm(form.pay_mode === m ? clr.accent + "33" : clr.card2, form.pay_mode === m ? clr.accent : clr.text) }}>{m}</button>)}
           </div>
         </Field>
         <Field label="Amount ₹"><input type="number" style={s.input} value={form.amount} onChange={e => f("amount", e.target.value)} /></Field>
@@ -1153,12 +1150,10 @@ const SearchScreen = ({ purchases, dispatches, sales, payments, parties, mandis,
         </div>
       )}
       {result?.type === "cold" && (
-        <div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-            <Stat label="Purchase" value={`₹${fmt(result.totalPurchase)}`} color={clr.blue} />
-            <Stat label="Net Sale" value={`₹${fmt(result.totalSale)}`} color={clr.green} />
-            <Stat label="P&L" value={`₹${fmt(Math.abs(result.totalPL))}`} color={result.totalPL >= 0 ? clr.green : clr.red} />
-          </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+          <Stat label="Purchase" value={`₹${fmt(result.totalPurchase)}`} color={clr.blue} />
+          <Stat label="Net Sale" value={`₹${fmt(result.totalSale)}`} color={clr.green} />
+          <Stat label="P&L" value={`₹${fmt(Math.abs(result.totalPL))}`} color={result.totalPL >= 0 ? clr.green : clr.red} />
         </div>
       )}
       {result?.type === "mandi" && (
@@ -1180,7 +1175,7 @@ const Dashboard = ({ purchases, dispatches, sales, payments, parties }) => {
   const totalReceivable = parties.reduce((t, p) => {
     const sale = sales.filter(s => s.party_id === p.id).flatMap(s => s.lot_sales || []).reduce((a, l) => a + (l.netSale || 0), 0);
     const paid = payments.filter(pm => pm.type === "receivable" && pm.party_id === p.id).reduce((a, pm) => a + (pm.amount || 0), 0);
-    return t + (sale - paid);
+    return t + Math.max(0, sale - paid);
   }, 0);
   const getDispatched = (lot_id) => dispatches.flatMap(d => d.items || []).filter(i => i.lot_id === lot_id).reduce((s, i) => s + (parseFloat(i.bags_loaded) || 0), 0);
   const totalStock = purchases.reduce((t, p) => t + Math.max(0, (parseFloat(p.manual_bags) || 0) - getDispatched(p.lot_id)), 0);
@@ -1196,7 +1191,7 @@ const Dashboard = ({ purchases, dispatches, sales, payments, parties }) => {
         <Stat label="Stock (bags)" value={fmt(totalStock)} color={clr.accent} sub="Remaining" />
         <Stat label="Active Lots" value={activeLots} color={clr.blue} />
         <Stat label="Profit / Loss" value={`₹${fmt(Math.abs(totalPL))}`} color={totalPL >= 0 ? clr.green : clr.red} sub={totalPL >= 0 ? "Profit ✅" : "Loss 🔴"} />
-        <Stat label="Pending Receive" value={`₹${fmt(totalReceivable)}`} color={clr.red} />
+        <Stat label="Pending Receive" value={`₹${fmt(totalReceivable)}`} color={totalReceivable > 0 ? clr.red : clr.muted} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
         <div style={s.statCard(clr.accent)}><div style={{ fontSize: 11, color: clr.muted }}>Purchases</div><div style={{ fontWeight: 800, color: clr.accent }}>{purchases.length}</div><div style={{ fontSize: 11, color: clr.muted }}>₹{fmt(totalPurchaseCost)}</div></div>
@@ -1204,16 +1199,13 @@ const Dashboard = ({ purchases, dispatches, sales, payments, parties }) => {
         <div style={s.statCard(clr.blue)}><div style={{ fontSize: 11, color: clr.muted }}>Sales</div><div style={{ fontWeight: 800, color: clr.blue }}>{sales.length}</div><div style={{ fontSize: 11, color: clr.muted }}>₹{fmt(totalNetSale)}</div></div>
       </div>
       <div style={{ fontWeight: 700, marginBottom: 8 }}>Recent Purchases</div>
+      {purchases.length === 0 && <div style={{ color: clr.muted, fontSize: 13, textAlign: "center", padding: 16 }}>No purchases yet</div>}
       {purchases.slice(-3).reverse().map(p => (
         <div key={p.id} style={{ ...s.card2, ...s.rowBetween }}>
           <div><Badge v={`LOT: ${p.lot_id}`} color={clr.accent} /><span style={{ marginLeft: 8, fontSize: 13 }}>{p.kisan_name}</span></div>
           <span style={{ color: clr.accent, fontWeight: 700 }}>₹{fmt(p.total_amount)}</span>
         </div>
       ))}
-      <div style={{ ...s.card, marginTop: 16, background: clr.green + "10", border: `1px solid ${clr.green}33`, textAlign: "center" }}>
-        <div style={{ color: clr.green, fontWeight: 700 }}>✅ Supabase Connected</div>
-        <div style={{ fontSize: 12, color: clr.muted, marginTop: 4 }}>Data saved to cloud — won't be lost</div>
-      </div>
     </div>
   );
 };
@@ -1260,7 +1252,7 @@ export default function App() {
     <div style={{ ...s.screen, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16 }}>
       <div style={{ fontSize: 48 }}>🥔</div>
       <div style={{ color: clr.accent, fontWeight: 800, fontSize: 20 }}>AlooTrader</div>
-      <div style={{ color: clr.muted, fontSize: 14 }}>Loading from Supabase...</div>
+      <div style={{ color: clr.muted, fontSize: 14 }}>Loading...</div>
     </div>
   );
 
