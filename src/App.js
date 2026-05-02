@@ -13,7 +13,19 @@ const useSupabaseTable = (tableName, defaultValue = []) => {
     const fetchData = async () => {
       setLoading(true);
       const { data: rows, error } = await supabase.from(tableName).select("*").order("created_at", { ascending: true });
-      if (!error && rows) setData(rows);
+      if (!error && rows) {
+        const parsed = rows.map(row => {
+          const r = { ...row };
+          if (r.items && typeof r.items === 'string') {
+            try { r.items = JSON.parse(r.items); } catch { r.items = []; }
+          }
+          if (r.lot_sales && typeof r.lot_sales === 'string') {
+            try { r.lot_sales = JSON.parse(r.lot_sales); } catch { r.lot_sales = []; }
+          }
+          return r;
+        });
+        setData(parsed);
+      }
       setLoading(false);
     };
     fetchData();
