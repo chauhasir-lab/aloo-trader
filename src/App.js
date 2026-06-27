@@ -29,13 +29,26 @@ const useSupabaseTable = (tableName, defaultValue = []) => {
 
   const addItem = useCallback(async (item) => {
     const { created_at, ...rest } = item;
-    const { data: inserted, error } = await supabase.from(tableName).insert([{ ...rest }]).select();
-    if (!error && inserted) setData(p => [...p, inserted[0]]);
+    const formatted = { ...rest };
+    if (formatted.items && typeof formatted.items !== 'string') formatted.items = JSON.stringify(formatted.items);
+    if (formatted.lot_sales && typeof formatted.lot_sales !== 'string') formatted.lot_sales = JSON.stringify(formatted.lot_sales);
+    
+    const { data: inserted, error } = await supabase.from(tableName).insert([formatted]).select();
+    if (!error && inserted) {
+      const resp = { ...inserted[0] };
+      if (resp.items && typeof resp.items === 'string') try { resp.items = JSON.parse(resp.items); } catch { resp.items = []; }
+      if (resp.lot_sales && typeof resp.lot_sales === 'string') try { resp.lot_sales = JSON.parse(resp.lot_sales); } catch { resp.lot_sales = []; }
+      setData(p => [...p, resp]);
+    }
   }, [tableName]);
 
   const editItem = useCallback(async (item) => {
     const { id, created_at, ...rest } = item;
-    const { error } = await supabase.from(tableName).update(rest).eq("id", id);
+    const formatted = { ...rest };
+    if (formatted.items && typeof formatted.items !== 'string') formatted.items = JSON.stringify(formatted.items);
+    if (formatted.lot_sales && typeof formatted.lot_sales !== 'string') formatted.lot_sales = JSON.stringify(formatted.lot_sales);
+
+    const { error } = await supabase.from(tableName).update(formatted).eq("id", id);
     if (!error) setData(p => p.map(x => x.id === id ? { ...x, ...item } : x));
   }, [tableName]);
 
@@ -60,7 +73,11 @@ const getLotStatus = (lot, dispatches = [], sales = []) => {
   const effectiveBags = lot.pricing_type === "STD" ? parseFloat(lot.std_bags) : parseFloat(lot.manual_bags);
   const remaining = effectiveBags - totalDispatched;
   const soldValue = sales.flatMap(s => s.lot_sales || []).filter(l => l.lot_id === lot.lot_id).reduce((sum, l) => sum + (parseFloat(l.bags || 0) * parseFloat(l.rate || 0)), 0);
-  const profitLoss = soldValue - (parseFloat(lot.total_amount) || 0);
+  const expense = sales.flatMap(s => s.lot_sales || []).filter(l => l.lot_id === lot.lot_id).reduce((sum, l) => {
+    const saleForLot = sales.find(sx => sx.lot_sales?.some(lx => lx.lot_id === lot.lot_id));
+    return sum + (parseFloat(l.bags || 0) * (parseFloat(saleForLot?.labor_per_bag || 0)));
+  }, 0);
+  const profitLoss = soldValue - (parseFloat(lot.total_amount) || 0) - expense;
   return { totalDispatched, totalSold, remaining, isClosed: remaining <= 0 && totalDispatched > 0, soldValue, profitLoss };
 };
 
@@ -69,9 +86,8 @@ const Icon = ({ name, size = 18, color = clr.text }) => {
     purchase: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z",
     dispatch: "M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0",
     sale: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-    payment: "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z",
     master: "M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4",
-    add: "M12 4v16m8-8H4", x: "M6 18L18 6M6 6l12 12", search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z", trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16", edit: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+    add: "M12 4v16m8-8H4", x: "M6 18L18 6M6 6l12 12", trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16", edit: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icons[name]} /></svg>;
 };
@@ -140,6 +156,25 @@ const MasterScreen = ({ varieties, gradings, coldStorages, mandis, parties, ops 
   </div>
 );
 
+// --- DASHBOARD ---
+const DashboardScreen = ({ purchases, dispatches, sales }) => {
+  const activeLots = purchases.filter(p => !getLotStatus(p, dispatches, sales).isClosed).length;
+  const closedLots = purchases.filter(p => getLotStatus(p, dispatches, sales).isClosed).length;
+  const totalBalance = purchases.reduce((sum, p) => sum + (getLotStatus(p, dispatches, sales).remaining * 52.5), 0);
+  const totalProfitLoss = purchases.reduce((sum, p) => sum + getLotStatus(p, dispatches, sales).profitLoss, 0);
+
+  return (
+    <div style={s.content}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+        <div style={{ ...s.card2, background: clr.blue + "15" }}><div style={s.label}>सक्रिय लॉट्स</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.blue }}>{activeLots}</div></div>
+        <div style={{ ...s.card2, background: clr.red + "15" }}><div style={s.label}>बंद लॉट्स</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.red }}>{closedLots}</div></div>
+        <div style={{ ...s.card2, background: clr.green + "15" }}><div style={s.label}>कुल बैलेंस (kg)</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.green }}>{fmt(totalBalance)}</div></div>
+        <div style={{ ...s.card2, background: (totalProfitLoss >= 0 ? clr.green : clr.red) + "15" }}><div style={s.label}>Profit/Loss</div><div style={{ fontSize: 20, fontWeight: 800, color: totalProfitLoss >= 0 ? clr.green : clr.red }}>₹{fmt(totalProfitLoss)}</div></div>
+      </div>
+    </div>
+  );
+};
+
 // --- PURCHASE SCREEN ---
 const PurchaseScreen = ({ purchases, varieties, coldStorages, dispatches, sales, ops }) => {
   const [form, setForm] = useState({ lot_id: "", kisan_name: "", cold_storage_id: "", date: today(), variety_id: "", manual_bags: "", total_weight: "", rate: "", notes: "", pricing_type: "STD" });
@@ -172,7 +207,7 @@ const PurchaseScreen = ({ purchases, varieties, coldStorages, dispatches, sales,
   return (
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 12 }}>
-        <input style={{ ...s.input, flex: 1 }} placeholder="खोजें..." value={search} onChange={e => setSearch(e.target.value)} onKeyPress={e => e.key === "Enter" && handleSearch()} />
+        <input style={{ ...s.input, flex: 1 }} placeholder="लॉट या किसान खोजें..." value={search} onChange={e => setSearch(e.target.value)} onKeyPress={e => e.key === "Enter" && handleSearch()} />
         <button onClick={() => setShowForm(true)} style={{ ...s.btn(), marginLeft: 8 }}><Icon name="add" size={14} /></button>
       </div>
 
@@ -188,10 +223,6 @@ const PurchaseScreen = ({ purchases, varieties, coldStorages, dispatches, sales,
           <div><strong>डिस्पैच:</strong> {searchResult.status.totalDispatched} bags</div>
           {searchResult.dispatchInfo.length > 0 && <div style={s.divider} />}
           {searchResult.dispatchInfo.map((d, i) => <div key={i} style={{ fontSize: 12, color: clr.muted }}>📤 गेटपास: {d.gatepass_id} → {d.mandi_id}</div>)}
-          {searchResult.saleInfo.length > 0 && <>
-            <div style={s.divider} />
-            {searchResult.saleInfo.map((s, i) => <div key={i} style={{ fontSize: 12, color: clr.green }}>💰 बिक्रय: ₹{fmt(s.total_amount)}</div>)}
-          </>}
           <button onClick={() => setSearchResult(null)} style={{ ...s.btn(clr.card2, clr.text), width: "100%", marginTop: 8 }}>बंद करें</button>
         </div>
       )}
@@ -210,7 +241,6 @@ const PurchaseScreen = ({ purchases, varieties, coldStorages, dispatches, sales,
             </div>
             <div style={{ ...s.rowBetween, background: clr.card2, padding: 8, borderRadius: 6 }}><span>₹{p.rate}/bag</span><strong style={{ color: clr.green }}>₹{fmt(p.total_amount)}</strong></div>
             <div style={{ ...s.rowBetween, marginTop: 8, fontSize: 12, color: clr.muted }}><span>Dispatch: {status.totalDispatched} bags</span><span>Remaining: {fmt(status.remaining, 1)}</span></div>
-            {status.isClosed && <Badge v="CLOSED" color={clr.red} />}
           </div>
         );
       })}
@@ -220,261 +250,193 @@ const PurchaseScreen = ({ purchases, varieties, coldStorages, dispatches, sales,
         <Field label="किसान का नाम"><input style={s.input} value={form.kisan_name} onChange={e => setForm({ ...form, kisan_name: e.target.value })} /></Field>
         <Field label="कुल वजन (kg)"><input type="number" style={s.input} value={form.total_weight} onChange={e => setForm({ ...form, total_weight: e.target.value })} /></Field>
         <Field label="रेट (₹/bag)"><input type="number" style={s.input} value={form.rate} onChange={e => setForm({ ...form, rate: e.target.value })} /></Field>
-        <Field label="कोल्ड स्टोरेज"><select style={s.select} value={form.cold_storage_id} onChange={e => setForm({ ...form, cold_storage_id: e.target.value })}><option value="">चुनें</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
-        <div style={{ ...s.card2, background: clr.accent + "11" }}><div style={s.rowBetween}><span>STD Bags:</span><strong>{stdBags}</strong></div><div style={s.rowBetween}><span>कुल रकम:</span><strong style={{ color: clr.accent }}>₹{fmt(totalAmt)}</strong></div></div>
-        <button onClick={save} style={{ ...s.btn(), width: "100%", marginTop: 10 }}>सेव करें</button>
+        <Field label="कोल्ड स्टोरेज">
+          <select style={s.select} value={form.cold_storage_id} onChange={e => setForm({ ...form, cold_storage_id: e.target.value })}>
+            <option value="">चुनें...</option>
+            {coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
+        <Field label="किस्म">
+          <select style={s.select} value={form.variety_id} onChange={e => setForm({ ...form, variety_id: e.target.value })}>
+            <option value="">चुनें...</option>
+            {varieties.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </Field>
+        <div style={{ marginBottom: 12 }}>
+          <span style={s.label}>गणना का प्रकार</span>
+          <div style={{ ...s.row, marginTop: 4 }}>
+            <label><input type="radio" checked={form.pricing_type === "STD"} onChange={() => setForm({ ...form, pricing_type: "STD" })} /> 52.5kg STD</label>
+            <label><input type="radio" checked={form.pricing_type === "MANUAL"} onChange={() => setForm({ ...form, pricing_type: "MANUAL" })} /> मैनुअल कट्टे</label>
+          </div>
+        </div>
+        {form.pricing_type === "MANUAL" && (
+          <Field label="कट्टों की संख्या"><input type="number" style={s.input} value={form.manual_bags} onChange={e => setForm({ ...form, manual_bags: e.target.value })} /></Field>
+        )}
+        <button onClick={save} style={{ ...s.btn(), width: "100%", marginTop: 12 }}>लॉट सुरक्षित करें</button>
       </Modal>
     </div>
   );
 };
 
 // --- DISPATCH SCREEN ---
-const DispatchScreen = ({ purchases, dispatches, mandis, parties, ops }) => {
-  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", mandi_id: "", party_id: "", date: today(), items: [{ lot_id: "", bags: "", weight: "" }] });
+const DispatchScreen = ({ dispatches, purchases, mandis, sales, ops }) => {
   const [showForm, setShowForm] = useState(false);
-  const [search, setSearch] = useState("");
-  const [searchResult, setSearchResult] = useState(null);
+  const [form, setForm] = useState({ gatepass_id: "", date: today(), mandi_id: "", driver_name: "", truck_no: "", items: [] });
+  const [itemForm, setItemForm] = useState({ lot_id: "", bags: "" });
 
-  const openNew = () => {
-    setForm({ gatepass_id: "GP-" + uid(), vehicle_number: "", mandi_id: "", party_id: "", date: today(), items: [{ lot_id: "", bags: "", weight: "" }] });
-    setShowForm(true);
+  const activeLots = purchases.filter(p => !getLotStatus(p, dispatches, sales).isClosed);
+
+  const addItemRow = () => {
+    if (!itemForm.lot_id || !itemForm.bags) return;
+    setForm(p => ({ ...p, items: [...p.items, itemForm] }));
+    setItemForm({ lot_id: "", bags: "" });
   };
-
-  const addItem = () => setForm(p => ({ ...p, items: [...p.items, { lot_id: "", bags: "", weight: "" }] }));
-  const removeItem = (idx) => setForm(p => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
-  const updateItem = (idx, field, val) => setForm(p => ({ ...p, items: p.items.map((it, i) => i === idx ? { ...it, [field]: val } : it) }));
 
   const save = async () => {
-    if (!form.vehicle_number || !form.mandi_id || !form.party_id || form.items.length === 0 || form.items.some(i => !i.lot_id || !i.bags)) return;
+    if (!form.gatepass_id || form.items.length === 0) return;
     await ops.dispatches.addItem({ ...form, id: uid() });
     setShowForm(false);
+    setForm({ gatepass_id: "", date: today(), mandi_id: "", driver_name: "", truck_no: "", items: [] });
   };
-
-  const handleSearch = () => {
-    const gp = dispatches.find(d => d.gatepass_id.toLowerCase() === search.toLowerCase());
-    if (gp) setSearchResult(gp);
-  };
-
-  const filtered = dispatches.filter(d => d.gatepass_id.toLowerCase().includes(search.toLowerCase()) || d.vehicle_number.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 12 }}>
-        <input style={{ ...s.input, flex: 1 }} placeholder="गेटपास या वाहन..." value={search} onChange={e => setSearch(e.target.value)} onKeyPress={e => e.key === "Enter" && handleSearch()} />
-        <button onClick={openNew} style={{ ...s.btn(), marginLeft: 8 }}><Icon name="add" size={14} /></button>
+        <span style={{ fontWeight: 700 }}>📤 गेटपास / निकासी ट्रैकिंग</span>
+        <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={14} /> गेटपास</button>
       </div>
-
-      {searchResult && (
-        <div style={s.card}>
-          <div style={{ fontWeight: 700 }}>🔍 {searchResult.gatepass_id}</div>
-          <div><strong>वाहन:</strong> {searchResult.vehicle_number}</div>
-          <div><strong>मंडी:</strong> {mandis.find(m => m.id === searchResult.mandi_id)?.name}</div>
-          <div><strong>पार्टी:</strong> {parties.find(p => p.id === searchResult.party_id)?.name}</div>
-          <div style={s.divider} />
-          {searchResult.items?.map((it, i) => {
-            const lot = purchases.find(p => p.lot_id === it.lot_id);
-            return <div key={i} style={{ fontSize: 12 }}>📦 {it.lot_id}: {it.bags} bags ({it.weight} kg), ₹{lot ? fmt(lot.total_amount) : "0"}</div>;
-          })}
-          <button onClick={() => setSearchResult(null)} style={{ ...s.btn(clr.card2, clr.text), width: "100%", marginTop: 8 }}>बंद करें</button>
-        </div>
-      )}
-
-      {filtered.map(d => (
+      {dispatches.reverse().map(d => (
         <div key={d.id} style={s.card}>
-          <div style={s.rowBetween}><Badge v={d.gatepass_id} color={clr.blue} /><span style={{ fontSize: 12, color: clr.muted }}>{fmtDate(d.date)}</span></div>
-          <div style={{ fontWeight: 700, marginTop: 6 }}>🚛 {d.vehicle_number}</div>
-          <div style={{ fontSize: 12, color: clr.muted }}>मंडी: {mandis.find(m => m.id === d.mandi_id)?.name} | पार्टी: {parties.find(p => p.id === d.party_id)?.name}</div>
+          <div style={s.rowBetween}><strong style={{ color: clr.blue }}>GP: {d.gatepass_id}</strong><span>{fmtDate(d.date)}</span></div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>मंडी: {mandis.find(m => m.id === d.mandi_id)?.name || "Direct"} | गाड़ी: {d.truck_no || "-"}</div>
           <div style={s.divider} />
-          {d.items?.map((it, i) => {
-            const lot = purchases.find(p => p.lot_id === it.lot_id);
-            return <div key={i} style={{ fontSize: 12 }}>• {it.lot_id}: {it.bags} bags ({it.weight} kg) - ₹{lot ? fmt(lot.total_amount) : "0"}</div>;
-          })}
+          {d.items?.map((i, idx) => <div key={idx} style={{ fontSize: 12, ...s.rowBetween }}><span>लॉट ID: {i.lot_id}</span><strong>{i.bags} कट्टे</strong></div>)}
         </div>
       ))}
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="नया डिस्पैच">
-        <Field label="गेटपास नंबर"><input style={{ ...s.input, color: clr.muted }} value={form.gatepass_id} readOnly /></Field>
-        <Field label="वाहन नंबर"><input style={s.input} value={form.vehicle_number} onChange={e => setForm({ ...form, vehicle_number: e.target.value })} /></Field>
-        <Field label="मंडी"><select style={s.select} value={form.mandi_id} onChange={e => setForm({ ...form, mandi_id: e.target.value })}><option value="">चुनें</option>{mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
-        <Field label="पार्टी"><select style={s.select} value={form.party_id} onChange={e => setForm({ ...form, party_id: e.target.value })}><option value="">चुनें</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
-        {form.items.map((it, idx) => (
-          <div key={idx} style={{ ...s.card2, marginTop: 6 }}>
-            <div style={{ ...s.rowBetween, marginBottom: 8 }}><span style={{ fontWeight: 600 }}>लॉट {idx + 1}</span>{form.items.length > 1 && <button onClick={() => removeItem(idx)} style={s.btnSm()}><Icon name="x" size={12} color={clr.red} /></button>}</div>
-            <select style={s.select} value={it.lot_id} onChange={e => updateItem(idx, "lot_id", e.target.value)}><option value="">लॉट चुनें</option>{purchases.map(p => <option key={p.id} value={p.lot_id}>{p.lot_id} - {p.kisan_name}</option>)}</select>
-            <input type="number" style={{ ...s.input, marginTop: 6 }} placeholder="बैग" value={it.bags} onChange={e => updateItem(idx, "bags", e.target.value)} />
-            <input type="number" style={{ ...s.input, marginTop: 6 }} placeholder="वजन (kg)" value={it.weight} onChange={e => updateItem(idx, "weight", e.target.value)} />
-          </div>
-        ))}
-        <button onClick={addItem} style={{ ...s.btn(clr.card2, clr.text), width: "100%", marginTop: 10 }}>+ लॉट जोड़ें</button>
-        <button onClick={save} style={{ ...s.btn(), width: "100%", marginTop: 8 }}>डिस्पैच सेव करें</button>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="नया गेटपास जारी करें">
+        <Field label="गेटपास नंबर"><input style={s.input} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} /></Field>
+        <Field label="मंडी">
+          <select style={s.select} value={form.mandi_id} onChange={e => setForm({ ...form, mandi_id: e.target.value })}>
+            <option value="">चुनें...</option>
+            {mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+        </Field>
+        <Field label="गाड़ी नंबर"><input style={s.input} value={form.truck_no} onChange={e => setForm({ ...form, truck_no: e.target.value })} /></Field>
+        <div style={{ ...s.card2, background: clr.card }}>
+          <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>लॉट कट्टे लोड करें</div>
+          <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_id} onChange={e => setItemForm({ ...itemForm, lot_id: e.target.value })}>
+            <option value="">लॉट चुनें...</option>
+            {activeLots.map(p => <option key={p.id} value={p.lot_id}>{p.lot_id} ({p.kisan_name})</option>)}
+          </select>
+          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="कट्टे" value={itemForm.bags} onChange={e => setItemForm({ ...itemForm, bags: e.target.value })} />
+          <button onClick={addItemRow} style={{ ...s.btnSm(), width: "100%" }}>सूची में जोड़ें</button>
+        </div>
+        {form.items.map((i, idx) => <div key={idx} style={{ fontSize: 12, padding: 4 }}>{i.lot_id} ➔ {i.bags} Bags</div>)}
+        <button onClick={save} style={{ ...s.btn(), width: "100%", marginTop: 12 }}>गेटपास बनाएं</button>
       </Modal>
     </div>
   );
 };
 
 // --- SALES SCREEN ---
-const SalesScreen = ({ purchases, dispatches, sales, mandis, parties, ops }) => {
-  const [form, setForm] = useState({ gp_id: "", party_id: "", mandi_id: "", date: today(), lot_sales: [{ lot_id: "", bags: "", rate: "", weight: "" }], mandi_commission: "4", labor_per_bag: "5", other_expense: "0" });
+const SalesScreen = ({ sales, purchases, dispatches, parties, ops }) => {
   const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ bijak_id: "", date: today(), party_id: "", labor_per_bag: 0, lot_sales: [] });
+  const [saleItem, setSaleItem] = useState({ lot_id: "", bags: "", rate: "" });
 
-  const totalBags = form.lot_sales.reduce((sum, l) => sum + parseFloat(l.bags || 0), 0);
-  const grossSales = form.lot_sales.reduce((sum, l) => sum + (parseFloat(l.bags || 0) * parseFloat(l.rate || 0)), 0);
-  const mandiComm = (grossSales * parseFloat(form.mandi_commission || 0)) / 100;
-  const laborAmt = totalBags * parseFloat(form.labor_per_bag || 0);
-  const netAmt = grossSales - mandiComm - laborAmt - parseFloat(form.other_expense || 0);
-
-  const addLot = () => setForm(p => ({ ...p, lot_sales: [...p.lot_sales, { lot_id: "", bags: "", rate: "", weight: "" }] }));
-  const removeLot = (idx) => setForm(p => ({ ...p, lot_sales: p.lot_sales.filter((_, i) => i !== idx) }));
-  const updateLot = (idx, field, val) => setForm(p => ({ ...p, lot_sales: p.lot_sales.map((l, i) => i === idx ? { ...l, [field]: val } : l) }));
+  const addSaleRow = () => {
+    if (!saleItem.lot_id || !saleItem.bags || !saleItem.rate) return;
+    setForm(p => ({ ...p, lot_sales: [...p.lot_sales, saleItem] }));
+    setSaleItem({ lot_id: "", bags: "", rate: "" });
+  };
 
   const save = async () => {
-    if (!form.gp_id || !form.party_id || form.lot_sales.length === 0 || form.lot_sales.some(l => !l.lot_id || !l.bags || !l.rate)) return;
-    await ops.sales.addItem({ ...form, total_amount: netAmt, gross_amount: grossSales, mandi_commission_amt: mandiComm, labor_amount: laborAmt, id: uid() });
+    if (!form.bijak_id || form.lot_sales.length === 0) return;
+    const totalAmt = form.lot_sales.reduce((sum, l) => sum + (parseFloat(l.bags) * parseFloat(l.rate)), 0);
+    await ops.sales.addItem({ ...form, total_amount: totalAmt, id: uid() });
     setShowForm(false);
+    setForm({ bijak_id: "", date: today(), party_id: "", labor_per_bag: 0, lot_sales: [] });
   };
 
   return (
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 12 }}>
-        <span style={{ fontWeight: 700 }}>बिक्री ({sales.length})</span>
-        <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={14} /></button>
+        <span style={{ fontWeight: 700 }}>💰 बिक्री / बीजाक एंट्री</span>
+        <button onClick={() => setShowForm(true)} style={s.btn(clr.green, "#fff")}><Icon name="add" size={14} color="#fff" /> बिक्री</button>
       </div>
-
-      {sales.map(s => (
-        <div key={s.id} style={s.card}>
-          <div style={s.rowBetween}><span style={{ fontWeight: 700 }}>👤 {parties.find(p => p.id === s.party_id)?.name}</span><span style={{ fontSize: 12, color: clr.muted }}>{fmtDate(s.date)}</span></div>
-          <div style={{ fontSize: 12, color: clr.muted }}>मंडी: {mandis.find(m => m.id === s.mandi_id)?.name}</div>
+      {sales.reverse().map(sx => (
+        <div key={sx.id} style={s.card}>
+          <div style={s.rowBetween}><strong style={{ color: clr.green }}>BIJAK: {sx.bijak_id}</strong><span>{fmtDate(sx.date)}</span></div>
+          <div style={{ fontSize: 13, color: clr.muted }}>व्यापारी: {parties.find(p => p.id === sx.party_id)?.name}</div>
           <div style={s.divider} />
-          {s.lot_sales?.map((l, i) => <div key={i} style={{ fontSize: 12, marginBottom: 4 }}>📦 {l.lot_id}: {l.bags} bags @ ₹{l.rate}/bag = ₹{fmt(parseFloat(l.bags) * parseFloat(l.rate))}</div>)}
+          {sx.lot_sales?.map((l, idx) => (
+            <div key={idx} style={{ fontSize: 12, ...s.rowBetween }}>
+              <span>लॉट {l.lot_id} ({l.bags} कट्टे @ ₹{l.rate})</span>
+              <strong>₹{fmt(l.bags * l.rate)}</strong>
+            </div>
+          ))}
           <div style={s.divider} />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 11, color: clr.muted }}>
-            <div>सकल: ₹{fmt(s.gross_amount)}</div>
-            <div>मंडी कमीशन: ₹{fmt(s.mandi_commission_amt || 0)}</div>
-            <div>लेबर: ₹{fmt(s.labor_amount || 0)}</div>
-            <div>अन्य: ₹{fmt(parseFloat(s.other_expense || 0))}</div>
-          </div>
-          <div style={{ ...s.rowBetween, marginTop: 8, background: clr.green + "18", padding: 8, borderRadius: 6 }}>
-            <span>नेट:</span>
-            <strong style={{ color: clr.green }}>₹{fmt(s.total_amount)}</strong>
-          </div>
+          <div style={s.rowBetween}><span>कुल बीजाक वैल्यू:</span><strong style={{ color: clr.green }}>₹{fmt(sx.total_amount)}</strong></div>
         </div>
       ))}
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="बिक्री एंट्री">
-        <Field label="गेटपास"><select style={s.select} value={form.gp_id} onChange={e => { const gp = dispatches.find(d => d.id === e.target.value); setForm({ ...form, gp_id: e.target.value, party_id: gp?.party_id || "", mandi_id: gp?.mandi_id || "", lot_sales: gp?.items?.map(it => ({ ...it, rate: "", weight: it.bags })) || [{ lot_id: "", bags: "", rate: "", weight: "" }] }); }}><option value="">चुनें</option>{dispatches.map(d => <option key={d.id} value={d.id}>{d.gatepass_id}</option>)}</select></Field>
-        {form.lot_sales.map((l, idx) => (
-          <div key={idx} style={{ ...s.card2, marginTop: 6 }}>
-            <div style={s.rowBetween}><span>{l.lot_id} ({l.bags} bags)</span>{form.lot_sales.length > 1 && <button onClick={() => removeLot(idx)} style={s.btnSm()}><Icon name="x" size={12} color={clr.red} /></button>}</div>
-            <input type="number" style={{ ...s.input, marginTop: 6 }} placeholder="रेट ₹/bag" value={l.rate} onChange={e => updateLot(idx, "rate", e.target.value)} />
-            <input type="number" style={{ ...s.input, marginTop: 6 }} placeholder="वजन (kg)" value={l.weight} onChange={e => updateLot(idx, "weight", e.target.value)} />
-          </div>
-        ))}
-        <button onClick={addLot} style={{ ...s.btn(clr.card2, clr.text), width: "100%", marginTop: 10 }}>+ लॉट</button>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 10 }}>
-          <Field label="मंडी कमीशन (%)"><input type="number" style={s.input} value={form.mandi_commission} onChange={e => setForm({ ...form, mandi_commission: e.target.value })} /></Field>
-          <Field label="लेबर/बैग"><input type="number" style={s.input} value={form.labor_per_bag} onChange={e => setForm({ ...form, labor_per_bag: e.target.value })} /></Field>
-          <Field label="अन्य खर्चा (₹)"><input type="number" style={s.input} value={form.other_expense} onChange={e => setForm({ ...form, other_expense: e.target.value })} /></Field>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="नई बिक्री (बीजाक)">
+        <Field label="बीजाक नंबर"><input style={s.input} value={form.bijak_id} onChange={e => setForm({ ...form, bijak_id: e.target.value })} /></Field>
+        <Field label="व्यापारी / पार्टी">
+          <select style={s.select} value={form.party_id} onChange={e => setForm({ ...form, party_id: e.target.value })}>
+            <option value="">चुनें...</option>
+            {parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </Field>
+        <Field label="मजदूरी/कट्टा (खर्च)"><input type="number" style={s.input} value={form.labor_per_bag} onChange={e => setForm({ ...form, labor_per_bag: e.target.value })} /></Field>
+        <div style={{ ...s.card2, background: clr.card }}>
+          <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>लॉट वाइज क्लोजर डालें</div>
+          <select style={{ ...s.select, marginBottom: 6 }} value={saleItem.lot_id} onChange={e => setSaleItem({ ...saleItem, lot_id: e.target.value })}>
+            <option value="">लॉट चुनें...</option>
+            {purchases.map(p => <option key={p.id} value={p.lot_id}>{p.lot_id}</option>)}
+          </select>
+          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="बेचे गए कट्टे" value={saleItem.bags} onChange={e => setSaleItem({ ...saleItem, bags: e.target.value })} />
+          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="बिक्री रेट (₹/Bag)" value={saleItem.rate} onChange={e => setSaleItem({ ...saleItem, rate: e.target.value })} />
+          <button onClick={addSaleRow} style={{ ...s.btnSm(), width: "100%" }}>बिक्री लोड करें</button>
         </div>
-        <div style={{ ...s.card2, marginTop: 10 }}><div style={s.rowBetween}><span>सकल:</span><strong>₹{fmt(grossSales)}</strong></div><div style={s.rowBetween}><span>कमीशन ({form.mandi_commission}%):</span><strong>-₹{fmt(mandiComm)}</strong></div><div style={s.rowBetween}><span>नेट:</span><strong style={{ color: clr.green }}>₹{fmt(netAmt)}</strong></div></div>
-        <button onClick={save} style={{ ...s.btn(), width: "100%", marginTop: 10 }}>सेव करें</button>
+        <button onClick={save} style={{ ...s.btn(clr.green, "#fff"), width: "100%", marginTop: 12 }}>बीजाक फाइनल करें</button>
       </Modal>
     </div>
   );
 };
 
-// --- PAYMENT SCREEN ---
-const PaymentScreen = ({ parties, coldStorages, payments, ops }) => {
-  const [form, setForm] = useState({ party_id: "", cold_id: "", type: "receivable", amount: "", date: today(), notes: "" });
-  const [showForm, setShowForm] = useState(false);
-
-  const save = async () => {
-    if (!form.party_id || !form.amount) return;
-    await ops.payments.addItem({ ...form, amount: parseFloat(form.amount), id: uid() });
-    setShowForm(false);
-  };
-
-  return (
-    <div style={s.content}>
-      <div style={{ ...s.rowBetween, marginBottom: 12 }}>
-        <span style={{ fontWeight: 700 }}>लेजर ({payments.length})</span>
-        <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={14} /></button>
-      </div>
-
-      {parties.map(p => {
-        const due = payments.filter(pm => pm.party_id === p.id && pm.type === "receivable").reduce((sum, pm) => sum + parseFloat(pm.amount || 0), 0);
-        const paid = payments.filter(pm => pm.party_id === p.id && pm.type === "payable").reduce((sum, pm) => sum + parseFloat(pm.amount || 0), 0);
-        const balance = due - paid;
-        return (
-          <div key={p.id} style={{ ...s.card, opacity: balance !== 0 ? 1 : 0.5 }}>
-            <div style={{ fontWeight: 700 }}>{p.name}</div>
-            <div style={s.divider} />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, fontSize: 12 }}>
-              <div style={{ color: clr.green }}>मिला: ₹{fmt(due)}</div>
-              <div style={{ color: clr.red }}>दिया: ₹{fmt(paid)}</div>
-              <div style={{ color: balance >= 0 ? clr.green : clr.red, fontWeight: 700 }}>बाकी: ₹{fmt(balance)}</div>
-            </div>
-          </div>
-        );
-      })}
-
-      {payments.map(p => (
-        <div key={p.id} style={{ ...s.card2 }}>
-          <div style={s.rowBetween}>
-            <div>
-              <div style={{ fontWeight: 700, color: p.type === "receivable" ? clr.green : clr.red }}>{parties.find(pa => pa.id === p.party_id)?.name}</div>
-              <div style={{ fontSize: 11, color: clr.muted }}>Cold: {coldStorages.find(c => c.id === p.cold_id)?.name}</div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontWeight: 700, color: p.type === "receivable" ? clr.green : clr.red }}>₹{fmt(p.amount)}</div>
-              <div style={{ fontSize: 11, color: clr.muted }}>{fmtDate(p.date)}</div>
-            </div>
-          </div>
-        </div>
-      ))}
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="पेमेंट एंट्री">
-        <Field label="पार्टी"><select style={s.select} value={form.party_id} onChange={e => setForm({ ...form, party_id: e.target.value })}><option value="">चुनें</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
-        <Field label="कोल्ड स्टोरेज"><select style={s.select} value={form.cold_id} onChange={e => setForm({ ...form, cold_id: e.target.value })}><option value="">चुनें</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
-        <Field label="प्रकार"><select style={s.select} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="receivable">मिला</option><option value="payable">दिया</option></select></Field>
-        <Field label="रकम"><input type="number" style={s.input} value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></Field>
-        <Field label="तारीख"><input type="date" style={s.input} value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></Field>
-        <button onClick={save} style={{ ...s.btn(), width: "100%" }}>सेव करें</button>
-      </Modal>
-    </div>
-  );
-};
-
-// --- MAIN APP ---
+// --- APP CONTAINER ---
 export default function App() {
-  const [purchases, opsP] = useSupabaseTable("purchases");
-  const [dispatches, opsD] = useSupabaseTable("dispatches");
-  const [sales, opsS] = useSupabaseTable("sales");
-  const [payments, opsM] = useSupabaseTable("payments");
-  const [varieties, opsV] = useSupabaseTable("varieties");
-  const [gradings, opsG] = useSupabaseTable("gradings");
-  const [coldStorages, opsC] = useSupabaseTable("cold_storages");
-  const [mandis, opsMA] = useSupabaseTable("mandis");
-  const [parties, opsPA] = useSupabaseTable("parties");
-  const [currentTab, setCurrentTab] = useState("purchase");
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [varieties, opsVarieties] = useSupabaseTable("varieties");
+  const [gradings, opsGradings] = useSupabaseTable("gradings");
+  const [coldStorages, opsColdStorages] = useSupabaseTable("cold_storages");
+  const [mandis, opsMandis] = useSupabaseTable("mandis");
+  const [parties, opsParties] = useSupabaseTable("parties");
+  const [purchases, opsPurchases] = useSupabaseTable("purchases");
+  const [dispatches, opsDispatches] = useSupabaseTable("dispatches");
+  const [sales, opsSales] = useSupabaseTable("sales");
 
-  const ops = { purchases: opsP, dispatches: opsD, sales: opsS, payments: opsM, varieties: opsV, gradings: opsG, cold_storages: opsC, mandis: opsMA, parties: opsPA };
+  const ops = { varieties: opsVarieties, gradings: opsGradings, cold_storages: opsColdStorages, mandis: opsMandis, parties: opsParties, purchases: opsPurchases, dispatches: opsDispatches, sales: opsSales };
 
   return (
     <div style={s.screen}>
-      <div style={s.header}><h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: clr.accent }}>🥔 Aloo-Trader</h2><button onClick={() => setCurrentTab("master")} style={s.btnSm()}><Icon name="master" size={16} /></button></div>
-      <div style={s.content}>
-        {currentTab === "master" && <MasterScreen varieties={varieties} gradings={gradings} coldStorages={coldStorages} mandis={mandis} parties={parties} ops={ops} />}
-        {currentTab === "purchase" && <PurchaseScreen purchases={purchases} varieties={varieties} coldStorages={coldStorages} dispatches={dispatches} sales={sales} ops={ops} />}
-        {currentTab === "dispatch" && <DispatchScreen purchases={purchases} dispatches={dispatches} mandis={mandis} parties={parties} ops={ops} />}
-        {currentTab === "sales" && <SalesScreen purchases={purchases} dispatches={dispatches} sales={sales} mandis={mandis} parties={parties} ops={ops} />}
-        {currentTab === "payment" && <PaymentScreen parties={parties} coldStorages={coldStorages} payments={payments} ops={ops} />}
+      <div style={s.header}>
+        <span style={{ fontWeight: 800, fontSize: 18, color: clr.accent }}>Aloo-Trader v2</span>
+        <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
+
+      {activeTab === "dashboard" && <DashboardScreen purchases={purchases} dispatches={dispatches} sales={sales} />}
+      {activeTab === "purchase" && <PurchaseScreen purchases={purchases} varieties={varieties} coldStorages={coldStorages} dispatches={dispatches} sales={sales} ops={ops} />}
+      {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches} purchases={purchases} mandis={mandis} sales={sales} ops={ops} />}
+      {activeTab === "sale" && <SalesScreen sales={sales} purchases={purchases} dispatches={dispatches} parties={parties} ops={ops} />}
+      {activeTab === "master" && <MasterScreen varieties={varieties} gradings={gradings} coldStorages={coldStorages} mandis={mandis} parties={parties} ops={ops} />}
+
       <div style={s.navBar}>
-        <button onClick={() => setCurrentTab("master")} style={s.navItem(currentTab === "master")}><Icon name="master" color={currentTab === "master" ? clr.accent : clr.muted} /><span style={{ fontSize: 10 }}>मास्टर</span></button>
-        <button onClick={() => setCurrentTab("purchase")} style={s.navItem(currentTab === "purchase")}><Icon name="purchase" color={currentTab === "purchase" ? clr.accent : clr.muted} /><span style={{ fontSize: 10 }}>खरीद</span></button>
-        <button onClick={() => setCurrentTab("dispatch")} style={s.navItem(currentTab === "dispatch")}><Icon name="dispatch" color={currentTab === "dispatch" ? clr.accent : clr.muted} /><span style={{ fontSize: 10 }}>गेटपास</span></button>
-        <button onClick={() => setCurrentTab("sales")} style={s.navItem(currentTab === "sales")}><Icon name="sale" color={currentTab === "sales" ? clr.accent : clr.muted} /><span style={{ fontSize: 10 }}>बिक्री</span></button>
-        <button onClick={() => setCurrentTab("payment")} style={s.navItem(currentTab === "payment")}><Icon name="payment" color={currentTab === "payment" ? clr.accent : clr.muted} /><span style={{ fontSize: 10 }}>लेजर</span></button>
+        <button onClick={() => setActiveTab("dashboard")} style={s.navItem(activeTab === "dashboard")}><Icon name="sale" color={activeTab === "dashboard" ? clr.accent : clr.muted} />डैशबोर्ड</button>
+        <button onClick={() => setActiveTab("purchase")} style={s.navItem(activeTab === "purchase")}><Icon name="purchase" color={activeTab === "purchase" ? clr.accent : clr.muted} />खरीद</button>
+        <button onClick={() => setActiveTab("dispatch")} style={s.navItem(activeTab === "dispatch")}><Icon name="dispatch" color={activeTab === "dispatch" ? clr.accent : clr.muted} />निकासी</button>
+        <button onClick={() => setActiveTab("sale")} style={s.navItem(activeTab === "sale")}><Icon name="sale" color={activeTab === "sale" ? clr.accent : clr.muted} />बिक्री</button>
+        <button onClick={() => setActiveTab("master")} style={s.navItem(activeTab === "master")}><Icon name="master" color={activeTab === "master" ? clr.accent : clr.muted} />मास्टर</button>
       </div>
     </div>
   );
