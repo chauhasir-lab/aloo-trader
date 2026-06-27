@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = "https://cxjmwjljjnuthcrmnbqb.supabase.co";
@@ -9,29 +9,32 @@ const useSupabaseTable = (tableName, defaultValue = []) => {
   const [data, setData] = useState(defaultValue);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      const { data: rows, error } = await supabase.from(tableName).select("*").order("created_at", { ascending: true });
-      if (!error && rows) {
-        const parsed = rows.map(row => {
-          const r = { ...row };
-          if (r.items && typeof r.items === 'string') { try { r.items = JSON.parse(r.items); } catch { r.items = []; } }
-          if (r.lot_sales && typeof r.lot_sales === 'string') { try { r.lot_sales = JSON.parse(r.lot_sales); } catch { r.lot_sales = []; } }
-          return r;
-        });
-        setData(parsed);
-      }
-      setLoading(false);
-    };
-    fetchData();
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    const { data: rows, error } = await supabase.from(tableName).select("*").order("created_at", { ascending: true });
+    if (!error && rows) {
+      const parsed = rows.map(row => {
+        const r = { ...row };
+        if (r.items && typeof r.items === 'string') { try { r.items = JSON.parse(r.items); } catch { r.items = []; } }
+        if (r.lot_sales && typeof r.lot_sales === 'string') { try { r.lot_sales = JSON.parse(r.lot_sales); } catch { r.lot_sales = []; } }
+        return r;
+      });
+      setData(parsed);
+    }
+    setLoading(false);
   }, [tableName]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const addItem = useCallback(async (item) => {
     const { created_at, ...rest } = item;
     const { data: inserted, error } = await supabase.from(tableName).insert([{ ...rest }]).select();
-    if (!error && inserted) setData(p => [...p, inserted[0]]);
-  }, [tableName]);
+    if (!error && inserted) {
+      await fetchData();
+    }
+  }, [tableName, fetchData]);
 
   const deleteItem = useCallback(async (id) => {
     const { error } = await supabase.from(tableName).delete().eq("id", id);
@@ -47,14 +50,6 @@ const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN") : "-";
 const today = () => new Date().toISOString().slice(0, 10);
 
 const clr = { bg: "#0f1117", card: "#1a1d26", card2: "#22263a", accent: "#f5a623", green: "#22c55e", red: "#ef4444", blue: "#3b82f6", purple: "#a855f7", muted: "#6b7280", border: "#2d3148", text: "#f1f5f9" };
-
-const getLotStatus = (lot, dispatches = [], sales = []) => {
-  const totalDispatched = dispatches.flatMap(d => d.items || []).filter(i => i.lot_id === lot.lot_id).reduce((sum, i) => sum + parseFloat(i.bags || 0), 0);
-  const totalSales = sales.flatMap(s => s.lot_sales || []).filter(l => l.lot_id === lot.lot_id).reduce((sum, l) => sum + parseFloat(l.bags || 0), 0);
-  const stdBags = lot.total_weight ? parseFloat(lot.total_weight) / 52.5 : 0;
-  const remaining = stdBags - totalDispatched;
-  return { totalDispatched, totalSales, remaining, isClosed: remaining <= 0 && totalDispatched > 0 };
-};
 
 const Icon = ({ name, size = 18, color = clr.text }) => {
   const icons = {
@@ -81,7 +76,7 @@ const s = {
   btn: (bg = clr.accent, txt = "#000") => ({ background: bg, color: txt, border: "none", borderRadius: 8, padding: "11px 16px", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }),
   btnSm: (bg = clr.card2, txt = clr.text) => ({ background: bg, color: txt, border: `1px solid ${clr.border}`, borderRadius: 6, padding: "6px 10px", fontWeight: 600, fontSize: 12, cursor: "pointer" }),
   tag: (bg = clr.accent + "22", txt = clr.accent) => ({ background: bg, color: txt, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700 }),
-  content: { padding: 16, paddingBottom: 90 },
+  content: { padding: 16, paddingBottom: 110 },
   navBar: { position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: clr.card, borderTop: `1px solid ${clr.border}`, display: "flex", zIndex: 200 },
   navItem: (active) => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "10px 4px", gap: 3, background: "none", border: "none", color: active ? clr.accent : clr.muted, fontSize: 10, cursor: "pointer" }),
   divider: { height: 1, background: clr.border, margin: "10px 0" }
@@ -98,182 +93,352 @@ const Modal = ({ open, onClose, title, children }) => !open ? null : (
   </div>
 );
 
-// --- DASHBOARD TOOL ---
-const DashboardComponent = ({ purchases, dispatches, sales }) => {
-  const totalBagsPurchased = purchases.reduce((sum, p) => sum + (parseFloat(p.total_weight || 0) / 52.5), 0);
-  const totalWeightBags = purchases.reduce((sum, p) => sum + parseFloat(p.total_weight || 0), 0);
-  const totalDispatchedBags = dispatches.flatMap(d => d.items || []).reduce((sum, i) => sum + parseFloat(i.bags || 0), 0);
-  const stockRemaining = totalBagsPurchased - totalDispatchedBags;
+// --- DEDICATED GENERAL DASHBOARD VIEW ---
+const DedicatedDashboard = ({ purchases, dispatches, sales, payments, coldStorages, parties }) => {
+  const calculations = useMemo(() => {
+    let purchaseTotal = purchases.reduce((sum, p) => sum + parseFloat(p.total_amount || 0), 0);
+    let grossMandiSales = sales.reduce((sum, s) => sum + parseFloat(s.gross_amount || 0), 0);
+    let netMandiSales = sales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+    
+    let totalStdBags = purchases.reduce((sum, p) => sum + parseFloat(p.std_bags || 0), 0);
+    let totalDispBags = dispatches.flatMap(d => d.items || []).reduce((sum, i) => sum + parseFloat(i.bags || 0), 0);
+    let remainingBags = totalStdBags - totalDispBags;
+
+    let activeLotsCount = 0;
+    let closedLotsCount = 0;
+
+    purchases.forEach(p => {
+      let dispatchedForLot = dispatches.flatMap(d => d.items || []).filter(i => i.lot_id === p.lot_id).reduce((s, i) => s + parseFloat(i.bags || 0), 0);
+      if (dispatchedForLot >= p.std_bags) closedLotsCount++;
+      else activeLotsCount++;
+    });
+
+    let totalPaidToCold = payments.filter(p => p.type === "payable").reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+    let totalRecFromParties = payments.filter(p => p.type === "receivable").reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+
+    let currentColdDues = purchaseTotal - totalPaidToCold;
+    let currentPartyDues = netMandiSales - totalRecFromParties;
+    let netProfitLoss = netMandiSales - purchaseTotal;
+
+    return {
+      purchaseTotal, grossMandiSales, netMandiSales, remainingBags, activeLotsCount,
+      closedLotsCount, currentColdDues, currentPartyDues, netProfitLoss
+    };
+  }, [purchases, dispatches, sales, payments]);
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-      <div style={{ ...s.card2, background: clr.purple + "15", borderColor: clr.purple + "44" }}>
-        <div style={s.label}>कुल स्टॉक (STD Bags)</div>
-        <div style={{ fontSize: 18, fontWeight: 800, color: clr.purple }}>{fmt(totalBagsPurchased)} Bag</div>
-        <div style={{ fontSize: 11, color: clr.muted }}>({fmt(totalWeightBags)} KG)</div>
+    <div>
+      <div style={{ ...s.card, background: "linear-gradient(135deg, #1a1d26 0%, #22263a 100%)", borderLeft: `4px solid ${calculations.netProfitLoss >= 0 ? clr.green : clr.red}` }}>
+        <div style={s.label}>कुल व्यापारिक लाभ / हानि (Net P&L)</div>
+        <div style={{ fontSize: 24, fontWeight: 900, color: calculations.netProfitLoss >= 0 ? clr.green : clr.red }}>
+          ₹{fmt(calculations.netProfitLoss)}
+        </div>
+        <div style={{ fontSize: 11, color: clr.muted, marginTop: 4 }}>सकल बिक्री से कुल खरीद लागत घटाकर</div>
       </div>
-      <div style={{ ...s.card2, background: clr.green + "15", borderColor: clr.green + "44" }}>
-        <div style={s.label}>बैलेंस स्टॉक मंडी हेतु</div>
-        <div style={{ fontSize: 18, fontWeight: 800, color: clr.green }}>{fmt(stockRemaining, 1)} Bag</div>
-        <div style={{ fontSize: 11, color: clr.muted }}>({fmt(stockRemaining * 52.5)} KG)</div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+        <div style={s.card2}>
+          <div style={s.label}>सक्रिय लॉट (Active)</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: clr.accent }}>{calculations.activeLotsCount} Lots</div>
+        </div>
+        <div style={s.card2}>
+          <div style={s.label}>बंद लॉt (Closed)</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: clr.muted }}>{calculations.closedLotsCount} Lots</div>
+        </div>
       </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+        <div style={{ ...s.card2, borderLeft: `3px solid ${clr.red}` }}>
+          <div style={s.label}>कोल्ड स्टोरेज देना (Dues)</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: clr.red }}>₹{fmt(calculations.currentColdDues)}</div>
+        </div>
+        <div style={{ ...s.card2, borderLeft: `3px solid ${clr.green}` }}>
+          <div style={s.label}>आढ़ती से लेना (Receivable)</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: clr.green }}>₹{fmt(calculations.currentPartyDues)}</div>
+        </div>
+      </div>
+
+      <div style={s.card}>
+        <div style={s.label}>मंडी स्टॉक बैलेंस स्टेटस</div>
+        <div style={s.divider} />
+        <div style={{ ...s.rowBetween, fontSize: 13 }}>
+          <span>बचा हुआ स्टॉक:</span>
+          <strong style={{ color: clr.purple, fontSize: 16 }}>{fmt(calculations.remainingBags, 1)} Bags</strong>
+        </div>
+        <div style={{ fontSize: 11, color: clr.muted, marginTop: 2, textAlign: "right" }}>
+          ~{fmt(calculations.remainingBags * 52.5)} KG Inventory
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- ADVANCED SEARCH PROTOCOL ENGINE ---
+const AdvancedSearchEngine = ({ purchases, dispatches, sales, mandis, parties }) => {
+  const [query, setQuery] = useState("");
+  const [result, setResult] = useState(null);
+
+  const executeSearch = () => {
+    if (!query.trim()) return;
+    const cleanQuery = query.toLowerCase().trim();
+
+    // Find linked Lot
+    const matchedLot = purchases.find(p => p.lot_id.toLowerCase() === cleanQuery);
+    // Find linked Gatepass
+    const matchedDispatch = dispatches.find(d => d.gatepass_id.toLowerCase() === cleanQuery);
+
+    let targetLot = matchedLot;
+    let connectedDispatches = [];
+
+    if (matchedDispatch) {
+      connectedDispatches = [matchedDispatch];
+      const primaryLotId = matchedDispatch.items?.[0]?.lot_id;
+      if (primaryLotId) {
+        targetLot = purchases.find(p => p.lot_id === primaryLotId);
+      }
+    } else if (targetLot) {
+      connectedDispatches = dispatches.filter(d => d.items?.some(it => it.lot_id === targetLot.lot_id));
+    }
+
+    if (!targetLot && connectedDispatches.length === 0) {
+      setResult({ found: false });
+      return;
+    }
+
+    const linkedSales = sales.filter(s => s.gp_id && connectedDispatches.some(d => d.id === s.gp_id));
+    
+    let totalSaleRevenue = linkedSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+    let totalLotCost = targetLot ? parseFloat(targetLot.total_amount || 0) : 0;
+    let computedPnL = totalSaleRevenue - totalLotCost;
+
+    setResult({
+      found: true,
+      lot: targetLot,
+      dispatches: connectedDispatches,
+      sales: linkedSales,
+      pnl: computedPnL
+    });
+  };
+
+  return (
+    <div style={{ ...s.card, background: "#1c2030" }}>
+      <div style={s.label}>Advanced Tracking Matrix</div>
+      <div style={{ display: "flex", gap: 6, marginTop: 6, marginBottom: 10 }}>
+        <input style={s.input} placeholder="Lot Number या Gatepass ID दर्ज करें..." value={query} onChange={e => setQuery(e.target.value)} />
+        <button onClick={executeSearch} style={s.btn(clr.blue, "#fff")}><Icon name="search" size={14} /></button>
+      </div>
+
+      {result && !result.found && <div style={{ color: clr.red, fontSize: 12 }}>कोई रिकॉर्ड मैच नहीं हुआ। कृपया सही ID डालें।</div>}
+      
+      {result && result.found && (
+        <div style={{ background: clr.bg, padding: 10, borderRadius: 8, border: `1px solid ${clr.border}` }}>
+          {result.lot && (
+            <div>
+              <div style={s.rowBetween}><span style={{ color: clr.accent, fontWeight: 700 }}>{result.lot.lot_id}</span><span>{result.lot.kisan_name}</span></div>
+              <div style={{ fontSize: 11, color: clr.muted }}>मूल खरीद मूल्य: ₹{fmt(result.lot.total_amount)} | {fmt(result.lot.total_weight)} KG</div>
+            </div>
+          )}
+          <div style={s.divider} />
+          <div style={s.label}>लॉजिस्टिक्स एवं रूट विवरण:</div>
+          {result.dispatches.map((d, i) => (
+            <div key={i} style={{ fontSize: 12, marginTop: 4, background: clr.card2, padding: 6, borderRadius: 4 }}>
+              🚚 GP: <strong>{d.gatepass_id}</strong> | गाड़ी: {d.vehicle_number}<br/>
+              मंडी: {mandis.find(m => m.id === d.mandi_id)?.name} | आढ़ती: {parties.find(p => p.id === d.party_id)?.name}
+            </div>
+          ))}
+          <div style={s.divider} />
+          <div style={s.rowBetween}>
+            <span style={{ fontSize: 12 }}>Calculated Thread P&L:</span>
+            <strong style={{ color: result.pnl >= 0 ? clr.green : clr.red }}>₹{fmt(result.pnl)}</strong>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 // --- PURCHASE SCREEN ---
-const PurchaseScreen = ({ purchases, varieties, coldStorages, ops, dispatches, sales }) => {
-  const blank = { lot_id: "", kisan_name: "", cold_storage_id: "", date: today(), variety_id: "", total_weight: "", rate: "", notes: "" };
+const PurchaseScreen = ({ purchases, coldStorages, varieties, ops, dispatches, sales }) => {
+  const blank = { lot_id: "", kisan_name: "", cold_storage_id: "", date: today(), variety_id: "", total_weight: "", manual_bags: "", rate: "", notes: "" };
   const [form, setForm] = useState(blank);
   const [showForm, setShowForm] = useState(false);
-  const [search, setSearch] = useState("");
 
-  const stdBags = form.total_weight ? (parseFloat(form.total_weight) / 52.5).toFixed(2) : 0;
-  // FIX: Rate calculation based on standard 52.5kg counting rule
-  const totalAmt = stdBags * (parseFloat(form.rate) || 0);
+  const stdBags = form.total_weight ? parseFloat(form.total_weight) / 52.5 : 0;
+  const computedTotalCost = stdBags * (parseFloat(form.rate) || 0);
 
   const save = async () => {
     if (!form.lot_id || !form.kisan_name || !form.total_weight || !form.rate) return;
-    await ops.purchases.addItem({ ...form, std_bags: parseFloat(stdBags), total_amount: totalAmt, id: uid() });
-    setShowForm(false); setForm(blank);
+    await ops.purchases.addItem({
+      ...form,
+      std_bags: stdBags,
+      total_amount: computedTotalCost,
+      id: uid()
+    });
+    setShowForm(false);
+    setForm(blank);
   };
-
-  const filtered = purchases.filter(p => p.lot_id.toLowerCase().includes(search.toLowerCase()) || p.kisan_name.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <div>
-      <DashboardComponent purchases={purchases} dispatches={dispatches} sales={sales} />
       <div style={{ ...s.rowBetween, marginBottom: 12 }}>
-        <input style={{ ...s.input, width: "70%" }} placeholder="🔍 खोजें (लॉट/किसान)..." value={search} onChange={e => setSearch(e.target.value)} />
-        <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={14} /> New Lot</button>
+        <span style={{ fontWeight: 800, fontSize: 15 }}>आवक खरीद रजिस्टर (Lots inward)</span>
+        <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={14} /> New Purchase</button>
       </div>
 
-      {filtered.reverse().map(p => {
-        const status = getLotStatus(p, dispatches, sales);
-        return (
-          <div key={p.id} style={s.card}>
-            <div style={s.rowBetween}>
-              <span style={s.tag()}>LOT: {p.lot_id}</span>
-              <span style={{ fontSize: 12, color: clr.muted }}>{fmtDate(p.date)}</span>
-            </div>
-            <div style={{ fontWeight: 700, marginTop: 6, fontSize: 15 }}>{p.kisan_name}</div>
-            <div style={{ fontSize: 12, color: clr.muted }}>{coldStorages.find(c => c.id === p.cold_storage_id)?.name || "Cold Storage"}</div>
-            <div style={s.divider} />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <div><span style={s.label}>कुल वजन (KG):</span> <strong style={{ color: clr.purple }}>{fmt(p.total_weight)} kg</strong></div>
-              <div><span style={s.label}>STD बैग (52.5kg):</span> <strong style={{ color: clr.accent }}>{fmt(p.std_bags, 1)}</strong></div>
-            </div>
-            <div style={{ ...s.rowBetween, marginTop: 8, background: clr.card2, padding: 8, borderRadius: 6 }}>
-              <span style={{ fontSize: 12 }}>Rate: ₹{p.rate}/Bag</span>
-              <span style={{ fontWeight: 700, color: clr.green }}>₹{fmt(p.total_amount)}</span>
-            </div>
-            <div style={{ ...s.rowBetween, marginTop: 6, fontSize: 11, color: clr.muted }}>
-              <span>Dispatch: {status.totalDispatched} Bag</span>
-              <span>Balance: {fmt(status.remaining, 1)} Bag</span>
-            </div>
+      {purchases.map(p => (
+        <div key={p.id} style={s.card}>
+          <div style={s.rowBetween}>
+            <strong style={{ color: clr.accent }}>LOT ID: {p.lot_id}</strong>
+            <span style={{ fontSize: 11, color: clr.muted }}>{fmtDate(p.date)}</span>
           </div>
-        );
-      })}
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="नया परचेज लॉट">
-        <Field label="लॉट नंबर (Lot ID)"><input style={s.input} value={form.lot_id} onChange={e => setForm({ ...form, lot_id: e.target.value })} /></Field>
-        <Field label="किसान का नाम"><input style={s.input} value={form.kisan_name} onChange={e => setForm({ ...form, kisan_name: e.target.value })} /></Field>
-        <Field label="कुल वजन (टोटल वेट - KG)"><input type="number" style={s.input} value={form.total_weight} onChange={e => setForm({ ...form, total_weight: e.target.value })} /></Field>
-        <Field label="रेट (प्रति 52.5 KG बैग)"><input type="number" style={s.input} value={form.rate} onChange={e => setForm({ ...form, rate: e.target.value })} /></Field>
-        <Field label="कोल्ड स्टोरेज"><select style={s.select} value={form.cold_storage_id} onChange={e => setForm({ ...form, cold_storage_id: e.target.value })}><option value="">चुनें</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
-        <div style={{ ...s.card2, background: clr.accent + "11" }}>
-          <div style={s.rowBetween}><span style={{ fontSize: 12 }}>बनने वाले STD बैग:</span> <strong>{stdBags}</strong></div>
-          <div style={s.rowBetween}><span style={{ fontSize: 12 }}>अनुमानित कुल रकम:</span> <strong style={{ color: clr.accent }}>₹{fmt(totalAmt)}</strong></div>
+          <div style={{ fontWeight: 600, fontSize: 14, marginTop: 4 }}>किसान: {p.kisan_name}</div>
+          <div style={{ fontSize: 12, color: clr.blue }}>कोल्ड: {coldStorages.find(c => c.id === p.cold_storage_id)?.name || "N/A Warehouse"}</div>
+          <div style={{ fontSize: 12, color: clr.muted }}>वैरायटी: {varieties.find(v => v.id === p.variety_id)?.name || "Potato"}</div>
+          <div style={s.divider} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, fontSize: 12 }}>
+            <div><div style={s.label}>वजन (KG)</div><strong>{fmt(p.total_weight)} kg</strong></div>
+            <div><div style={s.label}>मैम्युअल बैग</div><strong>{p.manual_bags || 0} Bag</strong></div>
+            <div><div style={s.label}>STD बैग</div><strong style={{ color: clr.purple }}>{fmt(p.std_bags, 1)}</strong></div>
+          </div>
+          <div style={{ ...s.rowBetween, marginTop: 8, background: clr.card2, padding: 8, borderRadius: 6 }}>
+            <span>रेट: ₹{p.rate}/Bag</span>
+            <strong style={{ color: clr.red }}>₹{fmt(p.total_amount)} (Dues Posted)</strong>
+          </div>
         </div>
-        <button onClick={save} style={{ ...s.btn(), width: "100%", marginTop: 10 }}>लॉट सेव करें</button>
+      ))}
+
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="नया आवक परचेज दर्ज करें">
+        <Field label="लॉट नंबर (Manual Entry)"><input style={s.input} value={form.lot_id} onChange={e => setForm({ ...form, lot_id: e.target.value })} placeholder="Ex: LOT-501" /></Field>
+        <Field label="किसान का नाम"><input style={s.input} value={form.kisan_name} onChange={e => setForm({ ...form, kisan_name: e.target.value })} /></Field>
+        <Field label="कोल्ड storage"><select style={s.select} value={form.cold_storage_id} onChange={e => setForm({ ...form, cold_storage_id: e.target.value })}><option value="">चुनें</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+        <Field label="आलू वैरायटी"><select style={s.select} value={form.variety_id} onChange={e => setForm({ ...form, variety_id: e.target.value })}><option value="">वैरायटी चुनें</option>{varieties.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
+        <div style={{ display: "flex", gap: 6 }}>
+          <Field label="कुल वजन (KG)"><input type="number" style={s.input} value={form.total_weight} onChange={e => setForm({ ...form, total_weight: e.target.value })} /></Field>
+          <Field label="मैन्युअल बैग काउंट"><input type="number" style={s.input} value={form.manual_bags} onChange={e => setForm({ ...form, manual_bags: e.target.value })} /></Field>
+        </div>
+        <Field label="रेट प्रति standard बैग"><input type="number" style={s.input} value={form.rate} onChange={e => setForm({ ...form, rate: e.target.value })} /></Field>
+        
+        <div style={{ ...s.card2, background: "rgba(245,166,35,0.08)" }}>
+          <div style={s.rowBetween}><span>स्वचालित STD बैग (52.5kg):</span> <strong>{fmt(stdBags, 2)}</strong></div>
+          <div style={s.rowBetween}><span>कोल्ड ड्यूस लायबिलिटी:</span> <strong style={{ color: clr.red }}>₹{fmt(computedTotalCost)}</strong></div>
+        </div>
+        <button onClick={save} style={{ ...s.btn(), width: "100%", marginTop: 8 }}>परचेज लॉट फाइनल सेव करें</button>
       </Modal>
     </div>
   );
 };
 
-// --- DISPATCH SCREEN ---
+// --- DISPATCH SCREEN (MULTI LOT SELECTION MAP) ---
 const DispatchScreen = ({ purchases, dispatches, mandis, parties, ops }) => {
-  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", mandi_id: "", party_id: "", date: today(), items: [{ lot_id: "", bags: "" }] });
+  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", mandi_id: "", party_id: "", date: today(), items: [{ lot_id: "", bags: "", loaded_weight: "", bag_price: "" }] });
   const [showForm, setShowForm] = useState(false);
 
   const openNew = () => {
-    // FIX: Unique Gatepass Automatically generate ho raha hai aur party mapping connected hai
-    setForm({ gatepass_id: "GP-" + uid(), vehicle_number: "", mandi_id: "", party_id: "", date: today(), items: [{ lot_id: "", bags: "" }] });
+    setForm({ gatepass_id: "GP-" + uid(), vehicle_number: "", mandi_id: "", party_id: "", date: today(), items: [{ lot_id: "", bags: "", loaded_weight: "", bag_price: "" }] });
     setShowForm(true);
   };
 
+  const addLotRow = () => {
+    setForm({ ...form, items: [...form.items, { lot_id: "", bags: "", loaded_weight: "", bag_price: "" }] });
+  };
+
+  const totalBags = form.items.reduce((sum, i) => sum + parseFloat(i.bags || 0), 0);
+  const totalWeight = form.items.reduce((sum, i) => sum + parseFloat(i.loaded_weight || 0), 0);
+  const totalEstimatedValue = form.items.reduce((sum, i) => sum + (parseFloat(i.bags || 0) * parseFloat(i.bag_price || 0)), 0);
+
   const save = async () => {
     if (!form.vehicle_number || !form.mandi_id || !form.party_id) return;
-    await ops.dispatches.addItem({ ...form, id: uid() });
+    await ops.dispatches.addItem({
+      ...form,
+      total_bags: totalBags,
+      total_weight: totalWeight,
+      estimated_value: totalEstimatedValue,
+      id: uid()
+    });
     setShowForm(false);
   };
 
   return (
     <div>
       <div style={{ ...s.rowBetween, marginBottom: 12 }}>
-        <span style={{ fontWeight: 700 }}>चालान / गेटपास रिकॉर्ड</span>
-        <button onClick={openNew} style={s.btn()}><Icon name="add" size={14} /> New Dispatch</button>
+        <span style={{ fontWeight: 700 }}>मल्टी-लॉट निकासी गेटपास</span>
+        <button onClick={openNew} style={s.btn()}><Icon name="add" size={14} /> Multi-Lot Load</button>
       </div>
 
       {dispatches.map(d => (
         <div key={d.id} style={s.card}>
           <div style={s.rowBetween}>
             <span style={s.tag(clr.blue + "22", clr.blue)}>{d.gatepass_id}</span>
-            <span style={{ fontSize: 12, color: clr.muted }}>{fmtDate(d.date)}</span>
+            <span>{fmtDate(d.date)}</span>
           </div>
-          <div style={{ fontWeight: 700, marginTop: 6 }}>गाड़ी नंबर: {d.vehicle_number}</div>
-          <div style={{ fontSize: 13, color: clr.accent }}>मंडी: {mandis.find(m => m.id === d.mandi_id)?.name} | आढ़ती/पार्टी: {parties.find(p => p.id === d.party_id)?.name}</div>
+          <div style={{ fontSize: 14, fontWeight: 700, marginTop: 4 }}>🚚 गाड़ी: {d.vehicle_number}</div>
+          <div style={{ fontSize: 12, color: clr.muted }}>मंडी: {mandis.find(m => m.id === d.mandi_id)?.name} | आढ़ती: {parties.find(p => p.id === d.party_id)?.name}</div>
           <div style={s.divider} />
-          {d.items?.map((it, i) => <div key={i} style={{ fontSize: 13 }}>• लॉट नंबर <strong>{it.lot_id}</strong> से <strong>{it.bags} बैग</strong> dispatched.</div>)}
+          {d.items?.map((it, idx) => (
+            <div key={idx} style={{ fontSize: 12, background: clr.card2, padding: 6, borderRadius: 4, marginBottom: 4 }}>
+              📦 Lot: <strong>{it.lot_id}</strong> | {it.bags} बैग (~{it.loaded_weight} KG) @ ₹{it.bag_price}/Bag
+            </div>
+          ))}
+          <div style={{ ...s.rowBetween, marginTop: 6, fontSize: 13, fontWeight: 700, color: clr.accent }}>
+            <span>Total: {d.total_bags} Bags ({fmt(d.total_weight)} KG)</span>
+            <span>Value: ₹{fmt(d.estimated_value)}</span>
+          </div>
         </div>
       ))}
 
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="नया डिस्पैच / गेटपास जनरेट करें">
-        <Field label="गेटपास नंबर (Auto)"><input style={{ ...s.input, color: clr.muted }} value={form.gatepass_id} readOnly /></Field>
-        <Field label="गाड़ी नंबर (Vehicle Number)"><input style={s.input} placeholder="UP86XXXXXX" value={form.vehicle_number} onChange={e => setForm({ ...form, vehicle_number: e.target.value })} /></Field>
-        <Field label="भेजी जाने वाली मंडी"><select style={s.select} value={form.mandi_id} onChange={e => setForm({ ...form, mandi_id: e.target.value })}><option value="">मंडी चुनें</option>{mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
-        <Field label="आढ़ती / पार्टी (Mandi Party)"><select style={s.select} value={form.party_id} onChange={e => setForm({ ...form, party_id: e.target.value })}><option value="">पार्टी चुनें</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="नया मल्टी-लॉट गेटपास अलॉटमेंट">
+        <Field label="गेटपास नंबर (Auto)"><input style={s.input} value={form.gatepass_id} readOnly /></Field>
+        <Field label="गाड़ी नंबर"><input style={s.input} placeholder="UP83TXXXX" value={form.vehicle_number} onChange={e => setForm({ ...form, vehicle_number: e.target.value })} /></Field>
+        <Field label="गंतव्य मंडी"><select style={s.select} value={form.mandi_id} onChange={e => setForm({ ...form, mandi_id: e.target.value })}><option value="">चुनें</option>{mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
+        <Field label="टारगेट आढ़ती पार्टी"><select style={s.select} value={form.party_id} onChange={e => setForm({ ...form, party_id: e.target.value })}><option value="">चुनें</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
         
         <div style={s.card2}>
-          <span style={s.label}>लॉट ब्रेकडाउन माल लोड</span>
+          <div style={s.rowBetween}><span style={s.label}>मल्टी-लॉट लोड ब्रेकडाउन matrix</span><button onClick={addLotRow} style={s.btnSm(clr.blue, "#fff")}>+ Add Lot</button></div>
           {form.items.map((it, idx) => (
-            <div key={idx} style={{ display: "flex", gap: 6, marginTop: 6 }}>
-              <select style={{ ...s.select, flex: 2 }} value={it.lot_id} onChange={e => setForm({ ...form, items: form.items.map((itx, i) => i === idx ? { ...itx, lot_id: e.target.value } : itx) })}><option value="">लॉट चुनें</option>{purchases.map(p => <option key={p.id} value={p.lot_id}>{p.lot_id} ({p.kisan_name})</option>)}</select>
-              <input type="number" style={{ ...s.input, flex: 1 }} placeholder="Bags" value={it.bags} onChange={e => setForm({ ...form, items: form.items.map((itx, i) => i === idx ? { ...itx, bags: e.target.value } : itx) })} />
+            <div key={idx} style={{ borderBottom: `1px solid ${clr.border}`, paddingBottom: 8, marginTop: 6 }}>
+              <select style={s.select} value={it.lot_id} onChange={e => setForm({ ...form, items: form.items.map((ix, i) => i === idx ? { ...ix, lot_id: e.target.value } : ix) })}><option value="">लॉट चुनें</option>{purchases.map(p => <option key={p.id} value={p.lot_id}>{p.lot_id}</option>)}</select>
+              <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                <input type="number" placeholder="Bags" style={s.input} value={it.bags} onChange={e => setForm({ ...form, items: form.items.map((ix, i) => i === idx ? { ...ix, bags: e.target.value } : ix) })} />
+                <input type="number" placeholder="Weight KG" style={s.input} value={it.loaded_weight} onChange={e => setForm({ ...form, items: form.items.map((ix, i) => i === idx ? { ...ix, loaded_weight: e.target.value } : ix) })} />
+                <input type="number" placeholder="Price/Bag" style={s.input} value={it.bag_price} onChange={e => setForm({ ...form, items: form.items.map((ix, i) => i === idx ? { ...ix, bag_price: e.target.value } : ix) })} />
+              </div>
             </div>
           ))}
         </div>
-        <button onClick={save} style={{ ...s.btn(), width: "100%" }}>गेटपास और माल रवाना करें</button>
+
+        <div style={{ ...s.card2, background: clr.bg, fontSize: 12 }}>
+          <div>कुल लोडेड बोरे: <strong>{totalBags} Bags</strong></div>
+          <div>कुल अनुमानित भार: <strong>{totalWeight} KG</strong></div>
+          <div>कुल माल मूल्य: <strong style={{ color: clr.green }}>₹{fmt(totalEstimatedValue)}</strong></div>
+        </div>
+
+        <button onClick={save} style={{ ...s.btn(), width: "100%" }}>Authorize Route Dispatch</button>
       </Modal>
     </div>
   );
 };
 
-// --- SALES SCREEN WITH KHARCHA ---
+// --- SALES SCREEN (LOTWISE MANUAL WEIGHT ENTRY & ACCOUNTING) ---
 const SalesScreen = ({ dispatches, sales, parties, mandis, ops }) => {
-  const [form, setForm] = useState({ gp_id: "", party_id: "", mandi_id: "", date: today(), lot_sales: [{ lot_id: "", bags: "", total_kg: "", rate: "" }], comm_pct: "4", labor_per_bag: "5", transport_expense: "0", other_expense: "0" });
+  const [form, setForm] = useState({ gp_id: "", party_id: "", mandi_id: "", date: today(), lot_sales: [], comm_pct: "4", labor_per_bag: "5", transport_expense: "0" });
   const [showForm, setShowForm] = useState(false);
 
-  // Auto load data when Gatepass is selected
   const handleGPChange = (gpId) => {
     const gp = dispatches.find(d => d.id === gpId);
     if (gp) {
-      const mappedLots = gp.items?.map(it => ({ lot_id: it.lot_id, bags: it.bags, total_kg: (parseFloat(it.bags) * 50).toString(), rate: "" })) || [];
-      setForm({ ...form, gp_id: gpId, party_id: gp.party_id, mandi_id: gp.mandi_id, lot_sales: mappedLots });
+      const parsedLots = gp.items?.map(it => ({ lot_id: it.lot_id, bags: it.bags, manual_sold_weight: (parseFloat(it.bags) * 50).toString(), rate_per_bag: it.bag_price || "" })) || [];
+      setForm({ ...form, gp_id: gpId, party_id: gp.party_id, mandi_id: gp.mandi_id, lot_sales: parsedLots });
     }
   };
 
-  // FIX: Proper calculation for gross sales, commissions (%), and expenses per bag
-  const grossSales = form.lot_sales.reduce((sum, l) => sum + (parseFloat(l.bags || 0) * parseFloat(l.rate || 0)), 0);
+  const grossSales = form.lot_sales.reduce((sum, l) => sum + (parseFloat(l.bags || 0) * parseFloat(l.rate_per_bag || 0)), 0);
   const totalBags = form.lot_sales.reduce((sum, l) => sum + parseFloat(l.bags || 0), 0);
-  const totalKg = form.lot_sales.reduce((sum, l) => sum + parseFloat(l.total_kg || 0), 0);
-  
   const commAmt = (grossSales * parseFloat(form.comm_pct || 0)) / 100;
   const laborAmt = totalBags * parseFloat(form.labor_per_bag || 0);
-  const finalNetAmt = grossSales - commAmt - laborAmt - parseFloat(form.transport_expense || 0) - parseFloat(form.other_expense || 0);
+  const finalNetAmt = grossSales - commAmt - laborAmt - parseFloat(form.transport_expense || 0);
 
   const save = async () => {
-    if (!form.gp_id || !form.party_id) return;
+    if (!form.gp_id) return;
     await ops.sales.addItem({ ...form, total_amount: finalNetAmt, gross_amount: grossSales, id: uid() });
     setShowForm(false);
   };
@@ -281,78 +446,68 @@ const SalesScreen = ({ dispatches, sales, parties, mandis, ops }) => {
   return (
     <div>
       <div style={{ ...s.rowBetween, marginBottom: 12 }}>
-        <span style={{ fontWeight: 700 }}>बिक्री पट्टी / Mandi Sales</span>
-        <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={14} /> New Sale Entry</button>
+        <span style={{ fontWeight: 700 }}>मंडी बिक्री पर्ची (Sales Ledger)</span>
+        <button onClick={() => setShowForm(true)} style={s.btn(clr.green, "#fff")}><Icon name="add" size={14} /> New Sale Patti</button>
       </div>
 
       {sales.map(s => (
         <div key={s.id} style={s.card}>
           <div style={s.rowBetween}>
-            <span style={{ fontWeight: 700 }}>👤 {parties.find(p => p.id === s.party_id)?.name}</span>
-            <span style={{ fontSize: 12, color: clr.muted }}>{fmtDate(s.date)}</span>
+            <span style={s.tag(clr.green + "22", clr.green)}>👤 {parties.find(p => p.id === s.party_id)?.name}</span>
+            <span style={{ fontSize: 11 }}>{fmtDate(s.date)}</span>
           </div>
-          <div style={{ fontSize: 12, color: clr.muted }}>मंडी: {mandis.find(m => m.id === s.mandi_id)?.name}</div>
           <div style={s.divider} />
           {s.lot_sales?.map((l, i) => (
-            <div key={i} style={{ ...s.rowBetween, fontSize: 13, marginBottom: 4 }}>
-              <span>Lot: {l.lot_id} (<strong>{l.bags} Bag</strong> / {fmt(l.total_kg)} KG)</span>
-              <span>Rate: ₹{l.rate}/Bag</span>
+            <div key={i} style={{ fontSize: 13, background: clr.card2, padding: 6, borderRadius: 4, marginBottom: 4 }}>
+              Lot Reference: <strong>{l.lot_id}</strong> <br/>
+              विका बोरे: {l.bags} Bag | <span style={{ color: clr.accent }}>मैन्युअल वजन: {l.manual_sold_weight} KG</span> | Rate: ₹{l.rate_per_bag}
             </div>
           ))}
           <div style={s.divider} />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 11, color: clr.muted }}>
-            <div>सकल बिक्री: ₹{fmt(s.gross_amount)}</div>
-            <div>मंडी कमीशन (%): ₹{fmt((s.gross_amount * parseFloat(s.comm_pct || 0)) / 100)}</div>
-            <div>लेबर खर्चा: ₹{fmt(s.lot_sales?.reduce((sum,l)=>sum+parseFloat(l.bags||0),0)*parseFloat(s.labor_per_bag||0))}</div>
-            <div>भाड़ा / अन्य: ₹{fmt(parseFloat(s.transport_expense||0)+parseFloat(s.other_expense||0))}</div>
-          </div>
-          <div style={{ ...s.rowBetween, marginTop: 8, background: clr.green + "18", padding: 8, borderRadius: 6 }}>
-            <span>शुद्ध आमदनी (Net Receivables):</span>
+          <div style={{ ...s.rowBetween, fontSize: 14 }}>
+            <span>Net Financial Collection Credited:</span>
             <strong style={{ color: clr.green }}>₹{fmt(s.total_amount)}</strong>
           </div>
         </div>
       ))}
 
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="मंडी बिक्री पट्टी (Sales Out)">
-        <Field label="गेटपास / गाड़ी सिलेक्ट करें"><select style={s.select} value={form.gp_id} onChange={e => handleGPChange(e.target.value)}><option value="">गेटपास चुनें</option>{dispatches.map(d => <option key={d.id} value={d.id}>{d.gatepass_id} ({d.vehicle_number})</option>)}</select></Field>
-        <Field label="आढ़ती / पार्टी (Auto Link)"><select style={s.select} value={form.party_id} disabled><option value="">पार्टी ऑटो-लिंक</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="मंडी अंतिम बिक्री पट्टी रजिस्टर">
+        <Field label="संबंधित गेटपास चालान चुनें"><select style={s.select} value={form.gp_id} onChange={e => handleGPChange(e.target.value)}><option value="">चुनें</option>{dispatches.map(d => <option key={d.id} value={d.id}>{d.gatepass_id} ({d.vehicle_number})</option>)}</select></Field>
         
         {form.lot_sales.map((l, idx) => (
-          <div key={idx} style={{ ...s.card2, marginTop: 6 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>लॉट: {l.lot_id} ({l.bags} बैग)</div>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input type="number" style={{ ...s.input, flex: 1 }} placeholder="वजन (KG)" value={l.total_kg} onChange={e => setForm({ ...form, lot_sales: form.lot_sales.map((lx, i) => i === idx ? { ...lx, total_kg: e.target.value } : lx) })} />
-              <input type="number" style={{ ...s.input, flex: 1 }} placeholder="बिक्री रेट/बग" value={l.rate} onChange={e => setForm({ ...form, lot_sales: form.lot_sales.map((lx, i) => i === idx ? { ...lx, rate: e.target.value } : lx) })} />
+          <div key={idx} style={s.card2}>
+            <div style={{ fontWeight: 700, color: clr.accent, fontSize: 13 }}>Lot Profile: {l.lot_id} ({l.bags} Bags)</div>
+            <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+              <Field label="मैन्युअल कांटा वजन (KG)"><input type="number" style={s.input} value={l.manual_sold_weight} onChange={e => setForm({ ...form, lot_sales: form.lot_sales.map((lx, i) => i === idx ? { ...lx, manual_sold_weight: e.target.value } : lx) })} /></Field>
+              <Field label="बिक्री रेट"><input type="number" style={s.input} value={l.rate_per_bag} onChange={e => setForm({ ...form, lot_sales: form.lot_sales.map((lx, i) => i === idx ? { ...lx, rate_per_bag: e.target.value } : lx) })} /></Field>
             </div>
           </div>
         ))}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 10 }}>
-          <Field label="मंडी आढ़त (%)"><input type="number" style={s.input} value={form.comm_pct} onChange={e => setForm({ ...form, comm_pct: e.target.value })} /></Field>
-          <Field label="लेबर / पल्लेदारी (Per Bag)"><input type="number" style={s.input} value={form.labor_per_bag} onChange={e => setForm({ ...form, labor_per_bag: e.target.value })} /></Field>
-          <Field label="भाड़ा (Transport Expense)"><input type="number" style={s.input} value={form.transport_expense} onChange={e => setForm({ ...form, transport_expense: e.target.value })} /></Field>
-          <Field label="अन्य खर्चे (Other Expenses)"><input type="number" style={s.input} value={form.other_expense} onChange={e => setForm({ ...form, other_expense: e.target.value })} /></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+          <Field label="आढ़त कमीशन %"><input type="number" style={s.input} value={form.comm_pct} onChange={e => setForm({ ...form, comm_pct: e.target.value })} /></Field>
+          <Field label="मंडी पल्लेदारी/बोरा"><input type="number" style={s.input} value={form.labor_per_bag} onChange={e => setForm({ ...form, labor_per_bag: e.target.value })} /></Field>
+        </div>
+        <Field label="कुल काटा गया भाड़ा (Freight)"><input type="number" style={s.input} value={form.transport_expense} onChange={e => setForm({ ...form, transport_expense: e.target.value })} /></Field>
+
+        <div style={{ ...s.card2, background: clr.bg }}>
+          <div style={s.rowBetween}><span>सकल मूल्य:</span> <strong>₹{fmt(grossSales)}</strong></div>
+          <div style={s.rowBetween}><span>खर्चे काटकर नेट लेजर क्रेडिट:</span> <strong style={{ color: clr.green }}>₹{fmt(finalNetAmt)}</strong></div>
         </div>
 
-        <div style={{ ...s.card2, background: clr.green + "11", marginTop: 8 }}>
-          <div style={s.rowBetween}><span style={{ fontSize: 12 }}>कुल वजन बिका:</span> <strong>{totalKg} KG</strong></div>
-          <div style={s.rowBetween}><span style={{ fontSize: 12 }}>सकल बिक्री मूल्य:</span> <strong>₹{fmt(grossSales)}</strong></div>
-          <div style={s.rowBetween}><span style={{ fontSize: 12 }}>कुल खर्चे काटकर नेट लेजर:</span> <strong style={{ color: clr.green }}>₹{fmt(finalNetAmt)}</strong></div>
-        </div>
-
-        <button onClick={save} style={{ ...s.btn(), width: "100%", marginTop: 8 }}>बिक्री वाउचर सेव करें</button>
+        <button onClick={save} style={{ ...s.btn(clr.green, "#fff"), width: "100%" }}>लॉन्च बिक्री अकाउंट बिल</button>
       </Modal>
     </div>
   );
 };
 
-// --- LEGER / PAYMENT SCREEN ---
-const PaymentScreen = ({ parties, payments, ops }) => {
-  const [form, setForm] = useState({ party_id: "", type: "receivable", amount: "", date: today(), mode: "Cash", notes: "" });
+// --- LEGER / PAYMENT MANAGEMENT SCREEN ---
+const PaymentScreen = ({ parties, payments, coldStorages, ops }) => {
+  const [form, setForm] = useState({ entity_id: "", type: "receivable", amount: "", date: today(), notes: "" });
   const [showForm, setShowForm] = useState(false);
 
   const save = async () => {
-    if (!form.party_id || !form.amount) return;
+    if (!form.entity_id || !form.amount) return;
     await ops.payments.addItem({ ...form, amount: parseFloat(form.amount), id: uid() });
     setShowForm(false);
   };
@@ -360,37 +515,102 @@ const PaymentScreen = ({ parties, payments, ops }) => {
   return (
     <div>
       <div style={{ ...s.rowBetween, marginBottom: 12 }}>
-        <span style={{ fontWeight: 700 }}>लेजर / भुगतान एंट्री</span>
-        <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={14} /> New Transaction</button>
+        <span style={{ fontWeight: 700 }}>कैश / बैंक वाउचर बुक</span>
+        <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={14} /> Post Entry</button>
       </div>
 
-      {payments.map(p => (
-        <div key={p.id} style={s.card}>
-          <div style={s.rowBetween}>
-            <span style={{ fontWeight: 700 }}>{parties.find(pa => pa.id === p.party_id)?.name || "Unknown Party"}</span>
-            <span style={{ fontSize: 12, color: clr.muted }}>{fmtDate(p.date)}</span>
+      {payments.map(p => {
+        let name = p.type === "payable" ? coldStorages.find(c => c.id === p.entity_id)?.name : parties.find(pa => pa.id === p.entity_id)?.name;
+        return (
+          <div key={p.id} style={s.card}>
+            <div style={s.rowBetween}>
+              <strong>{name || "Unknown Profile Account"}</strong>
+              <span style={{ fontSize: 11 }}>{fmtDate(p.date)}</span>
+            </div>
+            <div style={{ ...s.rowBetween, marginTop: 6 }}>
+              <span style={s.tag(p.type === "receivable" ? clr.green + "22" : clr.red + "22", p.type === "receivable" ? clr.green : clr.red)}>
+                {p.type === "receivable" ? "पेमेंट आवक मिला (+)" : "कोल्ड भुगतान आउट (-)"}
+              </span>
+              <strong style={{ color: p.type === "receivable" ? clr.green : clr.red, fontSize: 16 }}>₹{fmt(p.amount)}</strong>
+            </div>
           </div>
-          <div style={{ ...s.rowBetween, marginTop: 6 }}>
-            <span style={s.tag(p.type === "receivable" ? clr.green + "22" : clr.red + "22", p.type === "receivable" ? clr.green : clr.red)}>{p.type === "receivable" ? "पेमेंट मिला (+)" : "पेमेंट दिया (-)"}</span>
-            <strong style={{ color: p.type === "receivable" ? clr.green : clr.red, fontSize: 16 }}>₹{fmt(p.amount)}</strong>
-          </div>
-          {p.notes && <div style={{ fontSize: 12, color: clr.muted, marginTop: 4 }}>Note: {p.notes}</div>}
-        </div>
-      ))}
+        );
+      })}
 
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="पेमेंट लेजर एंट्री वाउचर">
-        <Field label="पार्टी / आढ़ती चुनें"><select style={s.select} value={form.party_id} onChange={e => setForm({ ...form, party_id: e.target.value })}><option value="">पार्टी चुनें</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
-        <Field label="लेनदेन का प्रकार (Type)"><select style={s.select} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="receivable">पेमेंट मिला (Received from Party)</option><option value="payable">पेमेंट दिया (Paid to Kisan/Broker)</option></select></Field>
-        <Field label="रकम (Amount)"><input type="number" style={s.input} value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></Field>
-        <Field label="पेमेंट मोड"><select style={s.select} value={form.mode} onChange={e => setForm({ ...form, mode: e.target.value })}><option value="Cash">Cash</option><option value="UPI">UPI / Bank Transfer</option></select></Field>
-        <Field label="टिप्पणी (Notes)"><input style={s.input} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></Field>
-        <button onClick={save} style={{ ...s.btn(), width: "100%" }}>एंट्री पोस्ट करें</button>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="लेजर जर्नल एकाउंटिंग पोस्टिंग">
+        <Field label="लेनदेन वर्गीकरण प्रकार">
+          <select style={s.select} value={form.type} onChange={e => setForm({ ...form, type: e.target.value, entity_id: "" })}>
+            <option value="receivable">पेमेंट मिला (From Mandi Party)</option>
+            <option value="payable">पेमेंट दिया (To Cold Storage Ledger)</option>
+          </select>
+        </Field>
+        
+        <Field label="लक्षित खाता Ledger">
+          <select style={s.select} value={form.entity_id} onChange={e => setForm({ ...form, entity_id: e.target.value })}>
+            <option value="">सिलेक्ट करें</option>
+            {form.type === "payable" ? coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>) : parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </Field>
+
+        <Field label="भुगतान राशि (₹ Amount)"><input type="number" style={s.input} value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></Field>
+        <Field label="नरेशन विवरण"><input style={s.input} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Ex: Account Settlement" /></Field>
+        
+        <button onClick={save} style={{ ...s.btn(), width: "100%" }}>खाते में पोस्ट करें</button>
       </Modal>
     </div>
   );
 };
 
-// --- MAIN APP COMPONENT ---
+// --- MASTERS COMPONENT CONTROLLER ---
+const MastersScreen = ({ ops, parties, coldStorages, mandis, varieties }) => {
+  const [activeSubTab, setActiveSubTab] = useState("parties");
+  const [nameInput, setNameInput] = useState("");
+
+  const commitMaster = async () => {
+    if (!nameInput.trim()) return;
+    const item = { id: "MST-" + uid(), name: nameInput.trim() };
+    if (activeSubTab === "parties") await ops.parties.addItem(item);
+    if (activeSubTab === "cold") await ops.cold_storages.addItem(item);
+    if (activeSubTab === "mandi") await ops.mandis.addItem(item);
+    if (activeSubTab === "variety") await ops.varieties.addItem(item);
+    setNameInput("");
+  };
+
+  const getActiveArray = () => {
+    if (activeSubTab === "parties") return parties;
+    if (activeSubTab === "cold") return coldStorages;
+    if (activeSubTab === "mandi") return mandis;
+    return varieties;
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 4, overflowX: "auto", marginBottom: 12, paddingBottom: 4 }}>
+        {["parties", "cold", "mandi", "variety"].map(t => (
+          <button key={t} onClick={() => setActiveSubTab(t)} style={s.btnSm(activeSubTab === t ? clr.accent : clr.card2, activeSubTab === t ? "#000" : clr.text)}>
+            {t.toUpperCase()}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        <input style={s.input} placeholder={`Add element inside ${activeSubTab}`} value={nameInput} onChange={e => setNameInput(e.target.value)} />
+        <button onClick={commitMaster} style={s.btn()}>+</button>
+      </div>
+
+      <div>
+        {getActiveArray().map(item => (
+          <div key={item.id} style={{ ...s.rowBetween, ...s.card2 }}>
+            <span>{item.name}</span>
+            <span style={{ fontSize: 10, color: clr.muted }}>{item.id}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// --- CORE FRAMEWORK ---
 export default function App() {
   const [purchases, opsP] = useSupabaseTable("purchases");
   const [dispatches, opsD] = useSupabaseTable("dispatches");
@@ -400,27 +620,20 @@ export default function App() {
   const [coldStorages, opsC] = useSupabaseTable("cold_storages");
   const [mandis, opsMA] = useSupabaseTable("mandis");
   const [parties, opsPA] = useSupabaseTable("parties");
-  const [currentTab, setCurrentTab] = useState("purchase");
+  const [currentTab, setCurrentTab] = useState("dashboard");
 
   const ops = { purchases: opsP, dispatches: opsD, sales: opsS, payments: opsM, varieties: opsV, cold_storages: opsC, mandis: opsMA, parties: opsPA };
 
   return (
     <div style={s.screen}>
-      <div style={s.header}><h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: clr.accent }}>🥔 Aloo Trading Management OS</h2></div>
+      <div style={s.header}><h2 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: clr.accent }}>🥔 ALOO TRADING OS Pro v3.0</h2></div>
       
       <div style={s.content}>
-        {currentTab === "purchase" && <PurchaseScreen purchases={purchases} varieties={varieties} coldStorages={coldStorages} dispatches={dispatches} sales={sales} ops={ops} />}
-        {currentTab === "dispatch" && <DispatchScreen purchases={purchases} dispatches={dispatches} mandis={mandis} parties={parties} ops={ops} />}
-        {currentTab === "sales" && <SalesScreen dispatches={dispatches} sales={sales} parties={parties} mandis={mandis} ops={ops} />}
-        {currentTab === "payment" && <PaymentScreen parties={parties} payments={payments} ops={ops} />}
-      </div>
-
-      <div style={s.navBar}>
-        <button onClick={() => setCurrentTab("purchase")} style={s.navItem(currentTab === "purchase")}><Icon name="purchase" color={currentTab === "purchase" ? clr.accent : clr.muted} /><span>खरीद</span></button>
-        <button onClick={() => setCurrentTab("dispatch")} style={s.navItem(currentTab === "dispatch")}><Icon name="dispatch" color={currentTab === "dispatch" ? clr.accent : clr.muted} /><span>गेटपास</span></button>
-        <button onClick={() => setCurrentTab("sales")} style={s.navItem(currentTab === "sales")}><Icon name="sale" color={currentTab === "sales" ? clr.accent : clr.muted} /><span>बिक्री</span></button>
-        <button onClick={() => setCurrentTab("payment")} style={s.navItem(currentTab === "payment")}><Icon name="payment" color={currentTab === "payment" ? clr.accent : clr.muted} /><span>लेजर</span></button>
-      </div>
-    </div>
-  );
-}
+        {currentTab === "dashboard" && (
+          <>
+            <DedicatedDashboard purchases={purchases} dispatches={dispatches} sales={sales} payments={payments} coldStorages={coldStorages} parties={parties} />
+            <div style={{ height: 16 }} />
+            <AdvancedSearchEngine purchases={purchases} dispatches={dispatches} sales={sales} mandis={mandis} parties={parties} />
+          </>
+        )}
+        {currentTab === "purchase" && <PurchaseScreen purchases={purchases}
