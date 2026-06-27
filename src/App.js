@@ -58,11 +58,13 @@ const today = () => new Date().toISOString().slice(0, 10);
 const clr = { bg: "#0f1117", card: "#1a1d26", card2: "#22263a", accent: "#f5a623", green: "#22c55e", red: "#ef4444", blue: "#3b82f6", purple: "#a855f7", muted: "#6b7280", border: "#2d3148", text: "#f1f5f9" };
 const PMODES = ["Cash", "UPI", "NEFT/RTGS", "Cheque"];
 
+// FIX 1: getLotStatus me Sales Data sahi se check karna taaki "Sold" calculation accurate ho
 const getLotStatus = (lot, dispatches, sales) => {
   const totalDispatched = dispatches.flatMap(d => d.items || []).filter(i => i.lot_id === lot.lot_id).reduce((sum, i) => sum + parseFloat(i.bags || 0), 0);
+  const totalSales = sales.flatMap(s => s.lot_sales || []).filter(l => l.lot_id === lot.lot_id).reduce((sum, l) => sum + parseFloat(l.bags || 0), 0);
   const effectiveBags = lot.pricing_type === "STD" ? parseFloat(lot.std_bags) : parseFloat(lot.manual_bags);
   const remaining = effectiveBags - totalDispatched;
-  return { totalDispatched, remaining, isClosed: remaining <= 0 && totalDispatched > 0, status: remaining <= 0 && totalDispatched > 0 ? "CLOSED" : "ACTIVE" };
+  return { totalDispatched, totalSales, remaining, isClosed: remaining <= 0 && totalDispatched > 0, status: remaining <= 0 && totalDispatched > 0 ? "CLOSED" : "ACTIVE" };
 };
 
 const Icon = ({ name, size = 18, color = clr.text }) => {
@@ -293,14 +295,20 @@ const SalesScreen = ({ purchases, dispatches, sales, mandis, parties, ops }) => 
   const addLot = () => setForm(p => ({ ...p, lot_sales: [...p.lot_sales, { lot_id: "", bags: "", rate: "" }] }));
   const removeLot = (idx) => setForm(p => ({ ...p, lot_sales: p.lot_sales.filter((_, i) => i !== idx) }));
   const updateLot = (idx, field, val) => setForm(p => ({ ...p, lot_sales: p.lot_sales.map((l, i) => i === idx ? { ...l, [field]: val } : l) }));
-  const calcTotal = () => { const total = form.lot_sales.reduce((sum, l) => sum + (parseFloat(l.bags || 0) * parseFloat(l.rate || 0)), 0); setForm(p => ({ ...p, total_amount: total })); };
 
+  // FIX 2 & 3: Direct Amount Inject calculate kiya taaki Async State delay issue na aaye
   const save = async () => {
     if (!form.gp_id || !form.party_id || !form.mandi_id || form.lot_sales.length === 0 || form.lot_sales.some(l => !l.lot_id || !l.bags || !l.rate)) return;
-    calcTotal();
-    await ops.sales.addItem({ id: uid(), ...form });
-    setShowForm(false); setForm({ gp_id: "", party_id: "", mandi_id: "", date: today(), lot_sales: [{ lot_id: "", bags: "", rate: "" }], total_amount: "" });
+    const calculatedTotal = form.lot_sales.reduce((sum, l) => sum + (parseFloat(l.bags || 0) * parseFloat(l.rate || 0)), 0);
+    
+    await ops.sales.addItem({ id: uid(), ...form, total_amount: calculatedTotal });
+    setShowForm(false); 
+    setForm({ gp_id: "", party_id: "", mandi_id: "", date: today(), lot_sales: [{ lot_id: "", bags: "", rate: "" }], total_amount: "" });
   };
+
+  // Gatepass items select karne ke liye available lots nikalna
+  const selectedGatepass = dispatches.find(d => d.id === form.gp_id);
+  const availableLots = selectedGatepass ? selectedGatepass.items || [] : [];
 
   return (
     <div>
@@ -309,14 +317,28 @@ const SalesScreen = ({ purchases, dispatches, sales, mandis, parties, ops }) => 
         <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={16} color="#000" /> New</button>
       </div>
       <div style={s.content}>
-        {[...sales].reverse().map(s => <div key={s.id} style={s.card}><div style={s.rowBetween}><div><div style={{ fontWeight: 700 }}>💰 {parties.find(p => p.id === s.party_id)?.name}</div><div style={{ fontSize: 12, color: clr.muted }}>{mandis.find(m => m.id === s.mandi_id)?.name} · {fmtDate(s.date)}</div></div><button onClick={() => ops.sales.deleteItem(s.id)} style={{ ...s.btnSm(), padding: 6 }}><Icon name="trash" size={14} color={clr.red} /></button></div><div style={s.divider} />{s.lot_sales?.map((l, idx) => <div key={idx} style={{ ...s.card2, marginBottom: 6 }}><div style={s.rowBetween}><span>{l.lot_id}</span><span style={{ color: clr.green }}>₹{fmt(l.rate)}</span></div><div style={{ fontSize: 12, color: clr.muted }}>बैग: {l.bags}</div></div>)}<div style={{ ...s.rowBetween, marginTop: 8, background: clr.accent + "18", borderRadius: 8, padding: "8px 12px" }}><span style={{ fontSize: 12 }}>Total</span><span style={{ fontWeight: 800, color: clr.accent }}>₹{fmt(s.total_amount)}</span></div></div>)}
+        {[...sales].reverse().map(s => <div key={s.id} style={s.card}><div style={s.rowBetween}><div><div style={{ fontWeight: 700 }}>💰 {parties.find(p => p.id === s.party_id)?.name}</div><div style={{ fontSize: 12, color: clr.muted }}>{mandis.find(m => m.id === s.mandi_id)?.name} · {fmtDate(s.date)}</div></div><button onClick={() => ops.sales.deleteItem(s.id)} style={{ ...s.btnSm(), padding: 6 }}><Icon name="trash" size={14} color={clr.red} /></button></div><div style={s.divider} />{s.lot_sales?.map((l, idx) => <div key={idx} style={{ ...s.card2, marginBottom: 6 }}><div style={{ ...s.rowBetween }}><span>{l.lot_id}</span><span style={{ color: clr.green }}>₹{fmt(l.rate)}</span></div><div style={{ fontSize: 12, color: clr.muted }}>बैग: {l.bags}</div></div>)}<div style={{ ...s.rowBetween, marginTop: 8, background: clr.accent + "18", borderRadius: 8, padding: "8px 12px" }}><span style={{ fontSize: 12 }}>Total</span><span style={{ fontWeight: 800, color: clr.accent }}>₹{fmt(s.total_amount)}</span></div></div>)}
       </div>
       <Modal open={showForm} onClose={() => setShowForm(false)} title="New Sale">
-        <Field label="Gatepass"><select style={s.select} value={form.gp_id} onChange={e => setForm(p => ({ ...p, gp_id: e.target.value }))}><option value="">Select</option>{dispatches.map(d => <option key={d.id} value={d.id}>{d.vehicle_number}</option>)}</select></Field>
+        <Field label="Gatepass (Vehicle)"><select style={s.select} value={form.gp_id} onChange={e => setForm(p => ({ ...p, gp_id: e.target.value }))}><option value="">Select</option>{dispatches.map(d => <option key={d.id} value={d.id}>{d.vehicle_number} ({fmtDate(d.date)})</option>)}</select></Field>
         <Field label="Party"><select style={s.select} value={form.party_id} onChange={e => setForm(p => ({ ...p, party_id: e.target.value }))}><option value="">Select</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
         <Field label="Mandi"><select style={s.select} value={form.mandi_id} onChange={e => setForm(p => ({ ...p, mandi_id: e.target.value }))}><option value="">Select</option>{mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
         <Field label="Date"><input type="date" style={s.input} value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} /></Field>
-        {form.lot_sales.map((l, idx) => <div key={idx} style={{ ...s.card2, marginBottom: 12, padding: 12 }}><div style={{ ...s.rowBetween, marginBottom: 8 }}><span style={{ fontWeight: 600 }}>Lot {idx + 1}</span>{form.lot_sales.length > 1 && <button onClick={() => removeLot(idx)} style={s.btnSm()}><Icon name="x" size={12} color={clr.red} /></button>}</div><input style={s.input} value={l.lot_id} onChange={e => updateLot(idx, "lot_id", e.target.value)} placeholder="Lot ID" /><input type="number" style={{ ...s.input, marginTop: 8 }} placeholder="Bags" value={l.bags} onChange={e => updateLot(idx, "bags", e.target.value)} /><input type="number" style={{ ...s.input, marginTop: 8 }} placeholder="Rate" value={l.rate} onChange={e => updateLot(idx, "rate", e.target.value)} /></div>)}
+        
+        {form.lot_sales.map((l, idx) => (
+          <div key={idx} style={{ ...s.card2, marginBottom: 12, padding: 12 }}>
+            <div style={{ ...s.rowBetween, marginBottom: 8 }}><span style={{ fontWeight: 600 }}>Lot {idx + 1}</span>{form.lot_sales.length > 1 && <button onClick={() => removeLot(idx)} style={s.btnSm()}><Icon name="x" size={12} color={clr.red} /></button>}</div>
+            
+            {/* FIX: Manual string input badal kar Dropdown lagaya selected Gatepass ke mapping ke according */}
+            <select style={s.select} value={l.lot_id} onChange={e => updateLot(idx, "lot_id", e.target.value)}>
+              <option value="">Select Lot</option>
+              {availableLots.map((it, i) => <option key={i} value={it.lot_id}>{it.lot_id} (Dispatch Bags: {it.bags})</option>)}
+            </select>
+            
+            <input type="number" style={{ ...s.input, marginTop: 8 }} placeholder="Bags" value={l.bags} onChange={e => updateLot(idx, "bags", e.target.value)} />
+            <input type="number" style={{ ...s.input, marginTop: 8 }} placeholder="Rate" value={l.rate} onChange={e => updateLot(idx, "rate", e.target.value)} />
+          </div>
+        ))}
         <button onClick={addLot} style={{ ...s.btn(clr.card2, clr.text), width: "100%", marginBottom: 12 }}>+ Add</button>
         <button onClick={save} style={{ ...s.btn(), width: "100%" }}>Save</button>
       </Modal>
