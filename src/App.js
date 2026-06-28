@@ -43,7 +43,7 @@ const uid = () => Math.random().toString(36).slice(2, 9).toUpperCase();
 const fmt = (n) => (isNaN(n) || n === null || n === undefined ? "0" : Number(n).toLocaleString("en-IN"));
 const today = () => new Date().toISOString().slice(0, 10);
 
-const clr = { bg: "#0f1117", card: "#1a1d26", card2: "#22263a", accent: "#f5a623", green: "#22c55e", red: "#ef4444", blue: "#3b82f6", border: "#2d3148", text: "#f1f5f9", muted: "#6b7280" };
+const clr = { bg: "#0f1117", card: "#1a1d26", card2: "#22263a", accent: "#f5a623", green: "#22c55e", red: "#ef4444", blue: "#3b82f6", purple: "#a855f7", border: "#2d3148", text: "#f1f5f9", muted: "#6b7280" };
 
 const s = {
   screen: { minHeight: "100vh", background: clr.bg, color: clr.text, fontFamily: "system-ui, sans-serif", maxWidth: 480, margin: "0 auto", position: "relative" },
@@ -150,7 +150,6 @@ const DispatchScreen = ({ dispatches, purchases, ops }) => {
 
   const activeLotDetails = purchases.find(p => p.lot_id === item.lot_id);
   
-  // Real-time dynamic math formula transformations
   const calculatedStdBags = item.weight ? (parseFloat(item.weight) / 52.5) : 0;
   const realTimeLotCost = activeLotDetails ? (calculatedStdBags * activeLotDetails.rate_per_bag) : 0;
 
@@ -174,7 +173,6 @@ const DispatchScreen = ({ dispatches, purchases, ops }) => {
     if (!form.gatepass_id || form.items.length === 0) return alert("Verification parameters missing");
     await ops.dispatches.addItem({ ...form, date: today(), id: uid() });
 
-    // Live backend loops tracking remaining counts
     for (const dispatchedItem of form.items) {
       const matchLot = purchases.find(p => p.lot_id === dispatchedItem.lot_id);
       if (matchLot) {
@@ -246,14 +244,14 @@ const DispatchScreen = ({ dispatches, purchases, ops }) => {
             <button onClick={pushLotToGatepass} style={s.btnSm(clr.accent, "#000")}>+ Bind Lot inside GP</button>
           </div>
           {form.items.map((i, idx) => <div key={idx} style={{ fontSize: 11, marginTop: 4 }}>Locked Entry: {i.lot_id} | Cost Allocation: ₹{fmt(i.cost_value)}</div>)}
-          <div style={{ display: "flex", gap: 6, marginTop: 12 }}><button onClick={() => setShow(false)} style={s.btnSm()}>Aborted</button><button onClick={executeDispatchFlow} style={s.btn(clr.green, "#fff")}>Authorize Outbound Dispatch</button></div>
+          <div style={{ display: "flex", gap: 6, marginTop: 12 }}><button onClick={() => setShow(false)} style={s.btnSm()}>Cancel</button><button onClick={executeDispatchFlow} style={s.btn(clr.green, "#fff")}>Authorize Outbound Dispatch</button></div>
         </div></div>
       )}
     </div>
   );
 };
 
-// 4. REDESIGNED PROPORTIONAL SALE MODULE
+// 4. PROPORTIONAL SALE MODULE
 const SaleScreen = ({ sales, dispatches, purchases, ops }) => {
   const [show, setShow] = useState(false);
   const [gatepassInput, setGatepassInput] = useState("");
@@ -283,18 +281,15 @@ const SaleScreen = ({ sales, dispatches, purchases, ops }) => {
       const targetArrivedWeight = parseFloat(arrivedWeights[l.lot_id]) || l.weight;
       const targetPricePerKg = parseFloat(rates[l.lot_id]) || 0;
 
-      // Weight Shortage calculations
       const calculatedWeightShortage = l.weight - targetArrivedWeight;
       const weightShortageFinancialCost = calculatedWeightShortage * purchasePricePerKg;
       const shortagePercentage = (calculatedWeightShortage / l.weight) * 100;
 
-      // Mandi Industry standard proportional weight allocation rule 
       const weightProportionRatio = combinedWeightMetric > 0 ? (l.weight / combinedWeightMetric) : 0;
       
       const rawGrossSaleValue = targetArrivedWeight * targetPricePerKg;
       const commissionAmountDeduction = (rawGrossSaleValue * (parseFloat(expenses.commission) || 0)) / 100;
 
-      // Aggregated cash split distribution model
       const totalLotCashExpenses = transportVal + (hamaliVal * l.manual_bags) + otherVal;
       const allocatedProportionalExpense = totalLotCashExpenses * weightProportionRatio;
 
