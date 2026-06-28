@@ -17,7 +17,6 @@ const useSupabaseTable = (tableName, defaultValue = []) => {
         const r = { ...row };
         if (r.items && typeof r.items === 'string') try { r.items = JSON.parse(r.items); } catch { r.items = []; }
         if (r.lot_sales && typeof r.lot_sales === 'string') try { r.lot_sales = JSON.parse(r.lot_sales); } catch { r.lot_sales = []; }
-        if (r.expenses && typeof r.expenses === 'string') try { r.expenses = JSON.parse(r.expenses); } catch { r.expenses = {}; }
         return r;
       });
       setData(parsed);
@@ -33,731 +32,419 @@ const useSupabaseTable = (tableName, defaultValue = []) => {
     const formatted = { ...item, created_at: new Date().toISOString() };
     if (formatted.items && typeof formatted.items !== 'string') formatted.items = JSON.stringify(formatted.items);
     if (formatted.lot_sales && typeof formatted.lot_sales !== 'string') formatted.lot_sales = JSON.stringify(formatted.lot_sales);
-    if (formatted.expenses && typeof formatted.expenses !== 'string') formatted.expenses = JSON.stringify(formatted.expenses);
-    
-    const { data: inserted, error } = await supabase.from(tableName).insert([formatted]).select();
-    if (!error) {
-      fetchData();
-    } else {
-      console.error("Supabase Save Error:", error);
-      alert(`Save Failed: ${error.message || error.details}`);
-    }
+    const { error } = await supabase.from(tableName).insert([formatted]);
+    if (!error) fetchData();
   }, [tableName, fetchData]);
 
-  const editItem = useCallback(async (item) => {
-    const { created_at, ...rest } = item;
-    const formatted = { ...rest };
-    if (formatted.items && typeof formatted.items !== 'string') formatted.items = JSON.stringify(formatted.items);
-    if (formatted.lot_sales && typeof formatted.lot_sales !== 'string') formatted.lot_sales = JSON.stringify(formatted.lot_sales);
-    if (formatted.expenses && typeof formatted.expenses !== 'string') formatted.expenses = JSON.stringify(formatted.expenses);
-
-    const { error } = await supabase.from(tableName).update(formatted).eq("id", item.id);
-    if (!error) {
-      fetchData();
-    } else {
-      console.error("Supabase Update Error:", error);
-      alert(`Update Failed: ${error.message}`);
-    }
-  }, [tableName, fetchData]);
-
-  const deleteItem = useCallback(async (id) => {
-    if (!window.confirm("Kya aap sach me delete karna chahte hain?")) return;
-    const { error } = await supabase.from(tableName).delete().eq("id", id);
-    if (!error) {
-      setData(p => p.filter(x => x.id !== id));
-    } else {
-      console.error("Supabase Delete Error:", error);
-      alert(`Delete Failed: ${error.message}`);
-    }
-  }, [tableName]);
-
-  return [data, { addItem, editItem, deleteItem, loading, refresh: fetchData }];
+  return [data, { addItem, refresh: fetchData, loading }];
 };
 
 const uid = () => Math.random().toString(36).slice(2, 9).toUpperCase();
-const fmt = (n, d = 0) => (isNaN(n) || n === null || n === undefined ? "0" : Number(n).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d }));
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN") : "-";
+const fmt = (n) => (isNaN(n) || n === null || n === undefined ? "0" : Number(n).toLocaleString("en-IN"));
 const today = () => new Date().toISOString().slice(0, 10);
 
-const clr = { bg: "#0f1117", card: "#1a1d26", card2: "#22263a", accent: "#f5a623", green: "#22c55e", red: "#ef4444", blue: "#3b82f6", purple: "#a855f7", muted: "#6b7280", border: "#2d3148", text: "#f1f5f9" };
+const clr = { bg: "#0f1117", card: "#1a1d26", card2: "#22263a", accent: "#f5a623", green: "#22c55e", red: "#ef4444", blue: "#3b82f6", border: "#2d3148", text: "#f1f5f9", muted: "#6b7280" };
 
 const s = {
   screen: { minHeight: "100vh", background: clr.bg, color: clr.text, fontFamily: "system-ui, sans-serif", maxWidth: 480, margin: "0 auto", position: "relative" },
-  header: { background: clr.card, padding: "12px 14px", borderBottom: `1px solid ${clr.border}`, position: "sticky", top: 0, zIndex: 100, display: "flex", justifyContent: "space-between", alignItems: "center" },
+  header: { background: clr.card, padding: "12px 14px", borderBottom: `1px solid ${clr.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" },
   card: { background: clr.card, borderRadius: 10, padding: 12, marginBottom: 8, border: `1px solid ${clr.border}` },
   card2: { background: clr.card2, borderRadius: 8, padding: 10, marginBottom: 6, border: `1px solid ${clr.border}` },
   rowBetween: { display: "flex", alignItems: "center", justifyContent: "space-between" },
   row: { display: "flex", alignItems: "center", gap: 6 },
-  input: { width: "100%", background: clr.card2, border: `1px solid ${clr.border}`, borderRadius: 6, padding: "8px 10px", color: clr.text, fontSize: 13, boxSizing: "border-box", outline: "none" },
-  select: { width: "100%", background: clr.card2, border: `1px solid ${clr.border}`, borderRadius: 6, padding: "8px 10px", color: clr.text, fontSize: 13, boxSizing: "border-box", outline: "none" },
-  label: { fontSize: 10, color: clr.muted, marginBottom: 2, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 },
-  btn: (bg = clr.accent, txt = "#000") => ({ background: bg, color: txt, border: "none", borderRadius: 6, padding: "9px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, justifyContent: "center" }),
-  btnSm: (bg = clr.card2, txt = clr.text) => ({ background: bg, color: txt, border: `1px solid ${clr.border}`, borderRadius: 5, padding: "5px 8px", fontWeight: 600, fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }),
-  tag: (bg = clr.accent + "22", txt = clr.accent) => ({ background: bg, color: txt, borderRadius: 4, padding: "2px 6px", fontSize: 10, fontWeight: 700 }),
+  input: { width: "100%", background: clr.card2, border: `1px solid ${clr.border}`, borderRadius: 6, padding: "8px 10px", color: clr.text, fontSize: 13, boxSizing: "border-box" },
+  select: { width: "100%", background: clr.card2, border: `1px solid ${clr.border}`, borderRadius: 6, padding: "8px 10px", color: clr.text, fontSize: 13 },
+  label: { fontSize: 10, color: clr.muted, marginBottom: 2, fontWeight: 700, textTransform: "uppercase" },
+  btn: (bg = clr.accent, txt = "#000") => ({ background: bg, color: txt, border: "none", borderRadius: 6, padding: "9px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", width: "100%", display: "flex", justifyContent: "center", gap: 4 }),
+  btnSm: (bg = clr.card2, txt = clr.text) => ({ background: bg, color: txt, border: `1px solid ${clr.border}`, borderRadius: 5, padding: "5px 8px", fontWeight: 600, fontSize: 11, cursor: "pointer" }),
   content: { padding: 12, paddingBottom: 80 },
   navBar: { position: "fixed", bottom: 0, left: 0, right: 0, maxWidth: 480, margin: "0 auto", background: clr.card, borderTop: `1px solid ${clr.border}`, display: "flex", zIndex: 200 },
-  navItem: (active) => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 4px", gap: 2, background: "none", border: "none", color: active ? clr.accent : clr.muted, fontSize: 9, cursor: "pointer" }),
-  divider: { height: 1, background: clr.border, margin: "6px 0" }
+  navItem: (active) => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "10px 4px", background: "none", border: "none", color: active ? clr.accent : clr.muted, fontSize: 10, cursor: "pointer" })
 };
 
-const Icon = ({ name, size = 16, color = clr.text }) => {
-  const icons = {
-    dashboard: "M3 3h2v2H3V3zm4 0h2v2H7V3zm4 0h2v2h-2V3zm4 0h2v2h-2V3zM3 7h2v2H3V7zm4 0h2v2H7V7zm4 0h2v2h-2V7zm4 0h2v2h-2V7zM3 11h2v2H3v-2zm4 0h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2z",
-    purchase: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z",
-    dispatch: "M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0",
-    sale: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-    payment: "M3 10h18M7 15h.01M11 15h.01M15 15h.01M7 19h.01M11 19h.01M15 19h.01M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z",
-    stock: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z",
-    settings: "M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4",
-    add: "M12 4v16m8-8H4",
-    x: "M6 18L18 6M6 6l12 12",
-    trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
-    edit: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
-    search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z",
-    check: "M5 13l4 4L19 7",
-    arrow: "M9 5l7 7-7 7"
-  };
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icons[name]} /></svg>;
+const triggerCSVDownload = (title, headers, rows) => {
+  const fileContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+  const blob = new Blob([fileContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `${title}_${today()}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 };
 
-const Field = ({ label, children }) => <div style={{ marginBottom: 10 }}><div style={s.label}>{label}</div>{children}</div>;
-const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "16px 16px 0 0", width: "100%", maxWidth: 480, maxHeight: "90vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 12, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 14 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={12} /></button></div><div style={{ overflowY: "auto", padding: "0 12px 16px" }}>{children}</div></div></div>;
-const Badge = ({ v, color = clr.accent }) => <span style={s.tag(color + "22", color)}>{v}</span>;
-
-// MASTER SCREEN
-const MasterForm = ({ title, items, fields, onAdd, onEdit, onDelete }) => {
-  const [showForm, setShowForm] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({});
-
-  const save = async () => {
-    if (!form[fields[0].key]?.trim()) return;
-    if (editItem) await onEdit({ ...editItem, ...form });
-    else await onAdd({ id: uid(), ...form, created_at: new Date().toISOString() });
-    setShowForm(false);
-    setForm({});
-    setEditItem(null);
-  };
-
-  return (
-    <div>
-      <div style={{ ...s.rowBetween, marginBottom: 8 }}>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>{title}</span>
-        <button onClick={() => { setEditItem(null); setForm({}); setShowForm(true); }} style={s.btnSm(clr.accent + "22", clr.accent)}>
-          <Icon name="add" size={12} color={clr.accent} /> Add
-        </button>
-      </div>
-      {items.length === 0 && <div style={{ color: clr.muted, fontSize: 12, textAlign: "center", padding: 6 }}>No data</div>}
-      {items.map(item => (
-        <div key={item.id} style={{ ...s.card2, ...s.rowBetween }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, fontSize: 12 }}>{item[fields[0].key]}</div>
-            {fields.slice(1, 2).map(f => item[f.key] && <div key={f.key} style={{ fontSize: 11, color: clr.muted }}>{item[f.key]}</div>)}
-          </div>
-          <div style={s.row}>
-            <button onClick={() => { setEditItem(item); setForm({ ...item }); setShowForm(true); }} style={{ ...s.btnSm(), padding: "4px 6px" }}>
-              <Icon name="edit" size={11} color={clr.blue} />
-            </button>
-            <button onClick={() => onDelete(item.id)} style={{ ...s.btnSm(), padding: "4px 6px" }}>
-              <Icon name="trash" size={11} color={clr.red} />
-            </button>
-          </div>
-        </div>
-      ))}
-      <Modal open={showForm} onClose={() => setShowForm(false)} title={editItem ? "Edit" : "Add"}>
-        {fields.map(f => (
-          <Field key={f.key} label={f.label}>
-            <input style={s.input} value={form[f.key] || ""} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder || f.label} />
-          </Field>
-        ))}
-        <button onClick={save} style={{ ...s.btn(), width: "100%" }}>Save</button>
-      </Modal>
-    </div>
-  );
-};
-
-const MasterScreen = ({ varieties, gradings, coldStorages, mandis, parties, ops }) => (
-  <div style={s.content}>
-    <MasterForm title="Varieties" items={varieties} fields={[{ key: "name", label: "Variety Name" }]} onAdd={item => ops.varieties.addItem(item)} onEdit={item => ops.varieties.editItem(item)} onDelete={id => ops.varieties.deleteItem(id)} />
-    <MasterForm title="Gradings" items={gradings} fields={[{ key: "name", label: "Grade Name" }]} onAdd={item => ops.gradings.addItem(item)} onEdit={item => ops.gradings.editItem(item)} onDelete={id => ops.gradings.deleteItem(id)} />
-    <MasterForm title="Cold Storages" items={coldStorages} fields={[{ key: "name", label: "Name" }, { key: "phone", label: "Phone" }, { key: "address", label: "Address" }]} onAdd={item => ops.cold_storages.addItem(item)} onEdit={item => ops.cold_storages.editItem(item)} onDelete={id => ops.cold_storages.deleteItem(id)} />
-    <MasterForm title="Mandis" items={mandis} fields={[{ key: "name", label: "Name" }, { key: "phone", label: "Phone" }, { key: "address", label: "Address" }]} onAdd={item => ops.mandis.addItem(item)} onEdit={item => ops.mandis.editItem(item)} onDelete={id => ops.mandis.deleteItem(id)} />
-    <MasterForm title="Parties" items={parties} fields={[{ key: "name", label: "Name" }, { key: "phone", label: "Phone" }, { key: "address", label: "Address" }, { key: "credit_days", label: "Credit Days" }]} onAdd={item => ops.parties.addItem(item)} onEdit={item => ops.parties.editItem(item)} onDelete={id => ops.parties.deleteItem(id)} />
-  </div>
-);
-
-// DASHBOARD SCREEN
+// 1. ADVANCED DASHBOARD MODULE
 const DashboardScreen = ({ purchases, dispatches, sales }) => {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResult, setSearchResult] = useState(null);
+  const totalPurchasedBags = purchases.reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
+  const totalDispatchedBags = dispatches.flatMap(d => d.items || []).reduce((sum, i) => sum + (parseInt(i.manual_bags) || 0), 0);
+  const totalRemainingBags = purchases.filter(p => p.status !== 'closed').reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
 
-  const activeLots = purchases.filter(p => p.status !== 'closed').length;
-  const closedLots = purchases.filter(p => p.status === 'closed').length;
+  const activeLotsCount = purchases.filter(p => p.status !== 'closed').length;
+  const closedLotsCount = purchases.filter(p => p.status === 'closed').length;
 
-  const totalStock = purchases.reduce((sum, p) => sum + (parseFloat(p.manual_bags) || 0), 0);
-  const totalWeight = purchases.reduce((sum, p) => sum + (parseFloat(p.total_weight) || 0), 0);
-  const totalValue = purchases.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0);
-
-  const handleSearch = () => {
-    const query = searchQuery.toLowerCase();
-    const found = purchases.find(p => p.lot_id.toLowerCase() === query) || 
-                 dispatches.find(d => d.gatepass_id.toLowerCase() === query || d.vehicle_number?.toLowerCase() === query);
-    setSearchResult(found);
-  };
+  const todayDispatchBags = dispatches.filter(d => d.date === today()).flatMap(d => d.items || []).reduce((sum, i) => sum + (parseInt(i.manual_bags) || 0), 0);
+  const todaySaleGross = sales.filter(s => s.date === today()).flatMap(s => s.lot_sales || []).reduce((sum, l) => sum + (parseFloat(l.profit_loss) || 0), 0);
 
   return (
     <div style={s.content}>
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          <input style={{ ...s.input, flex: 1 }} placeholder="Search Lot/GP/Vehicle" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyPress={e => e.key === "Enter" && handleSearch()} />
-          <button onClick={handleSearch} style={{ ...s.btn(), padding: "8px 10px" }}><Icon name="search" size={12} /></button>
-        </div>
-      </div>
-
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
-        <div style={{ ...s.card2, background: clr.blue + "15" }}><div style={s.label}>Active Lots</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.blue }}>{activeLots}</div></div>
-        <div style={{ ...s.card2, background: clr.red + "15" }}><div style={s.label}>Closed Lots</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.red }}>{closedLots}</div></div>
-        <div style={{ ...s.card2, background: clr.purple + "15" }}><div style={s.label}>Total Bags</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.purple }}>{fmt(totalStock)}</div></div>
-        <div style={{ ...s.card2, background: clr.accent + "15" }}><div style={s.label}>Stock Value</div><div style={{ fontSize: 16, fontWeight: 800, color: clr.accent }}>₹{fmt(totalValue)}</div></div>
+        <div style={{ ...s.card2, background: clr.blue + "12" }}><div style={s.label}>Purchased Bags</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.blue }}>{fmt(totalPurchasedBags)}</div></div>
+        <div style={{ ...s.card2, background: clr.accent + "12" }}><div style={s.label}>Remaining Bags</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.accent }}>{fmt(totalRemainingBags)}</div></div>
+        <div style={{ ...s.card2, background: clr.green + "12" }}><div style={s.label}>Today's Dispatch</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.green }}>{fmt(todayDispatchBags)} Bags</div></div>
+        <div style={{ ...s.card2, background: clr.purple + "12" }}><div style={s.label}>Today's Profit Matrix</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.purple }}>₹{fmt(todaySaleGross)}</div></div>
+        <div style={{ ...s.card2, background: clr.bg, borderColor: clr.green }}><div style={s.label}>Active Lots Running</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.green }}>{activeLotsCount}</div></div>
+        <div style={{ ...s.card2, background: clr.bg, borderColor: clr.red }}><div style={s.label}>Closed Lots Storage</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.red }}>{closedLotsCount}</div></div>
       </div>
-
-      <div style={{ ...s.card, marginBottom: 12 }}>
-        <div style={s.label}>Stock Summary</div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginTop: 6 }}>
-          <span>Weight: <strong>{fmt(totalWeight)} kg</strong></span>
-          <span>Bags: <strong>{fmt(totalStock)}</strong></span>
-        </div>
-      </div>
-
-      {searchResult && (
-        <div style={{ ...s.card, background: clr.card2, marginBottom: 12 }}>
-          <div style={{ fontWeight: 600, color: clr.accent, marginBottom: 6 }}>Search Result: {searchResult.lot_id || searchResult.gatepass_id}</div>
-          <div style={s.divider} />
-          <div style={{ fontSize: 11, color: clr.muted }}>
-            {searchResult.lot_id ? `Lot Date: ${fmtDate(searchResult.date)}` : `Gatepass: ${fmtDate(searchResult.date)}`}
-          </div>
-          <button onClick={() => setSearchResult(null)} style={{ ...s.btn(clr.red, "#fff"), width: "100%", marginTop: 8 }}>Close</button>
-        </div>
-      )}
-
-      <div style={s.label}>Recent Purchases</div>
-      {purchases.slice(0, 3).map(p => (
-        <div key={p.id} style={s.card2}>
-          <div style={s.rowBetween}>
-            <strong style={{ fontSize: 12 }}>{p.lot_id}</strong>
-            <span style={s.tag(p.status === 'closed' ? clr.red + "22" : clr.green + "22", p.status === 'closed' ? clr.red : clr.green)}>{p.status || 'open'}</span>
-          </div>
-          <div style={{ fontSize: 11, color: clr.muted }}>{p.farmer_name}</div>
-        </div>
-      ))}
     </div>
   );
 };
 
-// PURCHASE SCREEN
-const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, mandis, ops }) => {
-  const [showForm, setShowForm] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", total_cost: "", variety_id: "", grading_id: "", cold_storage_id: "", mandi_id: "", date: today(), status: "open" });
-
-  const stdBags = form.total_weight ? (parseFloat(form.total_weight) / 52.5).toFixed(2) : "0.00";
-  const totalCost = (parseFloat(form.manual_bags) || 0) * (parseFloat(form.rate_per_bag) || 0);
-
-  const handleEdit = (p) => {
-    setEditItem(p);
-    setForm({ ...p });
-    setShowForm(true);
-  };
+// 2. PURCHASE MODULE
+const PurchaseScreen = ({ purchases, ops }) => {
+  const [show, setShow] = useState(false);
+  const [form, setForm] = useState({ lot_id: "", farmer_name: "", variety: "Chipsona", grading: "A", manual_bags: "", total_weight: "", rate_per_bag: "", date: today() });
 
   const save = async () => {
-    if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag) return alert("Fill required fields");
-    
-    const payload = { 
-      ...form, 
-      std_bags: parseFloat(stdBags), 
-      total_cost: parseFloat(totalCost),
-      manual_bags: parseInt(form.manual_bags),
-      total_weight: parseFloat(form.total_weight || 0),
-      rate_per_bag: parseFloat(form.rate_per_bag)
-    };
-    
-    if (editItem) {
-      await ops.purchases.editItem({ ...payload, id: editItem.id });
-    } else {
-      await ops.purchases.addItem({ ...payload, id: uid() });
-    }
-    setShowForm(false);
-    setEditItem(null);
-    setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", total_cost: "", variety_id: "", grading_id: "", cold_storage_id: "", mandi_id: "", date: today(), status: "open" });
+    if (!form.lot_id || !form.manual_bags) return alert("Fill data inputs");
+    await ops.purchases.addItem({ ...form, status: "open", manual_bags: parseInt(form.manual_bags), rate_per_bag: parseFloat(form.rate_per_bag), total_weight: parseFloat(form.total_weight) });
+    setShow(false);
+    setForm({ lot_id: "", farmer_name: "", variety: "Chipsona", grading: "A", manual_bags: "", total_weight: "", rate_per_bag: "", date: today() });
   };
 
   return (
     <div style={s.content}>
-      <div style={{ ...s.rowBetween, marginBottom: 12 }}>
-        <span style={{ fontWeight: 700, fontSize: 14 }}>Purchases</span>
-        <button onClick={() => { setEditItem(null); setShowForm(true); }} style={s.btn()}><Icon name="add" size={12} /> New</button>
-      </div>
-
+      <div style={{ ...s.rowBetween, marginBottom: 12 }}><span style={{ fontWeight: 700 }}>Inbound Purchase Registry</span><button onClick={() => setShow(true)} style={{ ...s.btn(), width: "auto" }}>+ Add New Lot</button></div>
       {purchases.map(p => (
         <div key={p.id} style={s.card}>
-          <div style={s.rowBetween}>
-            <div style={s.row}>
-              <Badge v={p.lot_id} color={p.status === 'closed' ? clr.red : clr.accent} />
-              <span style={s.tag(p.status === 'closed' ? clr.red + "22" : clr.green + "22", p.status === 'closed' ? clr.red : clr.green)}>{p.status || 'open'}</span>
-            </div>
-            <div style={s.row}>
-              <button onClick={() => handleEdit(p)} style={s.btnSm()}><Icon name="edit" size={12} color={clr.blue} /></button>
-              <button onClick={() => ops.purchases.deleteItem(p.id)} style={s.btnSm()}><Icon name="trash" size={12} color={clr.red} /></button>
-              <span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(p.date)}</span>
-            </div>
-          </div>
-          <div style={{ fontWeight: 600, fontSize: 12, marginTop: 4 }}>{p.farmer_name}</div>
-          <div style={s.divider} />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 11, marginBottom: 6 }}>
-            <div><span style={s.label}>Manual Bags</span><div style={{ fontWeight: 600 }}>{p.manual_bags}</div></div>
-            <div><span style={s.label}>Std Bags</span><div style={{ fontWeight: 600 }}>{fmt(p.std_bags, 2)}</div></div>
-            <div><span style={s.label}>Weight</span><div style={{ fontWeight: 600 }}>{p.total_weight} kg</div></div>
-            <div><span style={s.label}>Rate</span><div style={{ fontWeight: 600 }}>₹{p.rate_per_bag}</div></div>
-          </div>
-          <div style={{ background: clr.card2, padding: 6, borderRadius: 4, fontSize: 11 }}>
-            <span style={s.label}>Total Cost</span>
-            <div style={{ fontWeight: 700, color: clr.accent }}>₹{fmt(p.total_cost)}</div>
-          </div>
+          <div style={s.rowBetween}><strong>{p.lot_id}</strong><span style={{ fontSize: 11, color: p.status === 'closed' ? clr.red : clr.green, fontWeight: 700 }}>{p.status?.toUpperCase()}</span></div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Farmer: <strong>{p.farmer_name}</strong> | Variety: {p.variety} | Grading: {p.grading}</div>
+          <div style={{ fontSize: 12, color: clr.muted, marginTop: 2 }}>Actual Bags: {p.manual_bags} | Total Weight: {p.total_weight}kg | Rate: ₹{p.rate_per_bag}</div>
         </div>
       ))}
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title={editItem ? "Edit Purchase" : "New Purchase"}>
-        <Field label="Lot ID (Unique)"><input style={s.input} value={form.lot_id} onChange={e => setForm({ ...form, lot_id: e.target.value })} placeholder="LOT001" /></Field>
-        <Field label="Farmer Name"><input style={s.input} value={form.farmer_name} onChange={e => setForm({ ...form, farmer_name: e.target.value })} /></Field>
-        <Field label="Manual Bags"><input type="number" style={s.input} value={form.manual_bags} onChange={e => setForm({ ...form, manual_bags: e.target.value })} /></Field>
-        <Field label="Total Weight (kg)"><input type="number" style={s.input} value={form.total_weight} onChange={e => setForm({ ...form, total_weight: e.target.value })} /></Field>
-        <div style={{ ...s.card2, padding: 8, marginBottom: 10 }}>
-          <div style={s.label}>Std Bags (Auto) - 52.5kg</div>
-          <div style={{ fontWeight: 700, color: clr.accent }}>{stdBags}</div>
-        </div>
-        <Field label="Rate per Bag"><input type="number" step="0.01" style={s.input} value={form.rate_per_bag} onChange={e => setForm({ ...form, rate_per_bag: e.target.value })} /></Field>
-        <div style={{ ...s.card2, padding: 8, marginBottom: 10, background: clr.accent + "15" }}>
-          <div style={s.label}>Total Cost</div>
-          <div style={{ fontWeight: 700, fontSize: 14, color: clr.accent }}>₹{fmt(totalCost)}</div>
-        </div>
-        <Field label="Status">
-          <select style={s.select} value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
-            <option value="open">Open</option>
-            <option value="closed">Closed</option>
-          </select>
-        </Field>
-        <Field label="Variety"><select style={s.select} value={form.variety_id} onChange={e => setForm({ ...form, variety_id: e.target.value })}><option value="">Select</option>{varieties.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
-        <Field label="Grading"><select style={s.select} value={form.grading_id} onChange={e => setForm({ ...form, grading_id: e.target.value })}><option value="">Select</option>{gradings.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
-        <Field label="Cold Storage"><select style={s.select} value={form.cold_storage_id} onChange={e => setForm({ ...form, cold_storage_id: e.target.value })}><option value="">Select</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
-        <Field label="Mandi (Reference)"><select style={s.select} value={form.mandi_id} onChange={e => setForm({ ...form, mandi_id: e.target.value })}><option value="">Select</option>{mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
-        <button onClick={save} style={{ ...s.btn(), width: "100%" }}>Save Purchase</button>
-      </Modal>
+      {show && (
+        <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, width: "100%", padding: 12, borderRadius: "12px 12px 0 0" }}>
+          <div style={{ marginBottom: 6 }}><div style={s.label}>Lot Identifier</div><input style={s.input} placeholder="e.g. LOT001" value={form.lot_id} onChange={e => setForm({ ...form, lot_id: e.target.value })} /></div>
+          <div style={{ marginBottom: 6 }}><div style={s.label}>Farmer Name</div><input style={s.input} value={form.farmer_name} onChange={e => setForm({ ...form, farmer_name: e.target.value })} /></div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+            <div><div style={s.label}>Variety</div><input style={s.input} value={form.variety} onChange={e => setForm({ ...form, variety: e.target.value })} /></div>
+            <div><div style={s.label}>Grading</div><input style={s.input} value={form.grading} onChange={e => setForm({ ...form, grading: e.target.value })} /></div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginBottom: 10 }}>
+            <div><div style={s.label}>Actual Bags</div><input type="number" style={s.input} value={form.manual_bags} onChange={e => setForm({ ...form, manual_bags: e.target.value })} /></div>
+            <div><div style={s.label}>Weight (kg)</div><input type="number" style={s.input} value={form.total_weight} onChange={e => setForm({ ...form, total_weight: e.target.value })} /></div>
+            <div><div style={s.label}>Rate / Std Bag</div><input type="number" style={s.input} value={form.rate_per_bag} onChange={e => setForm({ ...form, rate_per_bag: e.target.value })} /></div>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}><button onClick={() => setShow(false)} style={s.btnSm()}>Cancel</button><button onClick={save} style={s.btn()}>Register Purchase Lot</button></div>
+        </div></div>
+      )}
     </div>
   );
 };
 
-// DISPATCH SCREEN
-const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
-  const [showForm, setShowForm] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", destination_party_id: "", destination_mandi_id: "", items: [], date: today() });
-  const [itemForm, setItemForm] = useState({ lot_id: "", manual_bags: "", weight: "", rate_per_bag: "", total_cost: "" });
+// 3. UPGRADED DISPATCH MODULE (GATEPASS MANIFEST)
+const DispatchScreen = ({ dispatches, purchases, ops }) => {
+  const [show, setShow] = useState(false);
+  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", mobile_number: "", transport_name: "", items: [] });
+  const [item, setItem] = useState({ lot_id: "", manual_bags: "", weight: "" });
 
-  const addItem = () => {
-    if (!itemForm.lot_id || !itemForm.manual_bags) return;
-    setForm(p => ({ ...p, items: [...p.items, { ...itemForm, manual_bags: parseInt(itemForm.manual_bags), weight: parseFloat(itemForm.weight || 0), rate_per_bag: parseFloat(itemForm.rate_per_bag || 0), total_cost: parseFloat(itemForm.total_cost || 0) }] }));
-    setItemForm({ lot_id: "", manual_bags: "", weight: "", rate_per_bag: "", total_cost: "" });
+  const activeLotDetails = purchases.find(p => p.lot_id === item.lot_id);
+  
+  // Real-time dynamic math formula transformations
+  const calculatedStdBags = item.weight ? (parseFloat(item.weight) / 52.5) : 0;
+  const realTimeLotCost = activeLotDetails ? (calculatedStdBags * activeLotDetails.rate_per_bag) : 0;
+
+  const pushLotToGatepass = () => {
+    if (!item.lot_id || !item.manual_bags || !item.weight) return alert("Metrics incomplete");
+    setForm(p => ({
+      ...p,
+      items: [...p.items, {
+        lot_id: item.lot_id,
+        manual_bags: parseInt(item.manual_bags),
+        weight: parseFloat(item.weight),
+        variety: activeLotDetails?.variety || "Potato",
+        grading: activeLotDetails?.grading || "A",
+        cost_value: realTimeLotCost
+      }]
+    }));
+    setItem({ lot_id: "", manual_bags: "", weight: "" });
   };
 
-  const removeItem = (idx) => {
-    setForm(p => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
-  };
+  const executeDispatchFlow = async () => {
+    if (!form.gatepass_id || form.items.length === 0) return alert("Verification parameters missing");
+    await ops.dispatches.addItem({ ...form, date: today(), id: uid() });
 
-  // Live total dispatch gatepass value sum tracker
-  const totalGatepassValue = form.items?.reduce((sum, item) => sum + (item.total_cost || 0), 0) || 0;
-
-  const handleEdit = (d) => {
-    setEditItem(d);
-    setForm({ ...d });
-    setShowForm(true);
-  };
-
-  const save = async () => {
-    if (!form.gatepass_id || form.items.length === 0) return alert("Add lots to dispatch");
-    
-    // Main Add / Edit Functionality Trigger
-    if (editItem) {
-      await ops.dispatches.editItem({ ...form, id: editItem.id });
-    } else {
-      await ops.dispatches.addItem({ ...form, id: uid() });
-    }
-
-    // --- AUTO LOT CLOSE CHECK SYSTEM ---
-    for (const item of form.items) {
-      const matchPurchase = purchases.find(p => p.lot_id === item.lot_id);
-      if (matchPurchase) {
-        const alreadyDispatchedBags = dispatches
-          .filter(d => d.id !== editItem?.id) 
-          .flatMap(d => d.items || [])
-          .filter(i => i.lot_id === item.lot_id)
-          .reduce((sum, i) => sum + (parseInt(i.manual_bags) || 0), 0);
-
-        const cumulativeDispatched = alreadyDispatchedBags + item.manual_bags;
-
-        if (cumulativeDispatched >= matchPurchase.manual_bags) {
-          await supabase.from("purchases").update({ status: "closed" }).eq("id", matchPurchase.id);
-        }
+    // Live backend loops tracking remaining counts
+    for (const dispatchedItem of form.items) {
+      const matchLot = purchases.find(p => p.lot_id === dispatchedItem.lot_id);
+      if (matchLot) {
+        const accurateRemainder = matchLot.manual_bags - dispatchedItem.manual_bags;
+        await supabase.from("purchases").update({
+          manual_bags: accurateRemainder <= 0 ? 0 : accurateRemainder,
+          status: accurateRemainder <= 0 ? "closed" : "open"
+        }).eq("id", matchLot.id);
       }
     }
-    ops.purchases.refresh(); // Refresh context dataset maps
+    ops.purchases.refresh();
+    setShow(false);
+    setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", mobile_number: "", transport_name: "", items: [] });
+  };
 
-    setShowForm(false);
-    setEditItem(null);
-    setForm({ gatepass_id: "", vehicle_number: "", destination_party_id: "", destination_mandi_id: "", items: [], date: today() });
+  const generateCleanWhatsAppString = (d) => {
+    let msg = `*Gatepass:* ${d.gatepass_id}\n*Vehicle:* ${d.vehicle_number}\n\n`;
+    d.items?.forEach(i => {
+      msg += `*Lot:* ${i.lot_id}\n${i.variety} (${i.grading})\n${i.manual_bags} Bags\n${i.weight} kg\n\n`;
+    });
+    return `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  };
+
+  const dispatchCSV = () => {
+    const rows = [];
+    dispatches.forEach(d => d.items?.forEach(i => rows.push([d.gatepass_id, d.vehicle_number, d.date, i.lot_id, i.manual_bags, i.weight, i.variety, i.grading, i.cost_value])));
+    triggerCSVDownload("Dispatch_Manifest_Report", ["Gatepass", "Vehicle", "Date", "LotID", "BagsCount", "WeightKG", "Variety", "Grade", "CalculatedCost"], rows);
   };
 
   return (
     <div style={s.content}>
-      <div style={{ ...s.rowBetween, marginBottom: 12 }}>
-        <span style={{ fontWeight: 700, fontSize: 14 }}>Dispatch</span>
-        <button onClick={() => { setEditItem(null); setShowForm(true); }} style={s.btn()}><Icon name="add" size={12} /> New</button>
-      </div>
-
-      {dispatches.map(d => {
-        const gpTotal = d.items?.reduce((sum, i) => sum + (i.total_cost || 0), 0) || 0;
-        return (
-          <div key={d.id} style={s.card}>
-            <div style={s.rowBetween}>
-              <Badge v={`GP: ${d.gatepass_id}`} color={clr.blue} />
-              <div style={s.row}>
-                <button onClick={() => handleEdit(d)} style={s.btnSm()}><Icon name="edit" size={12} color={clr.blue} /></button>
-                <button onClick={() => ops.dispatches.deleteItem(d.id)} style={s.btnSm()}><Icon name="trash" size={12} color={clr.red} /></button>
-                <span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(d.date)}</span>
-              </div>
+      <div style={{ ...s.rowBetween, marginBottom: 12 }}><span style={{ fontWeight: 700 }}>Dispatch Deck</span><div style={s.row}><button onClick={dispatchCSV} style={s.btnSm(clr.blue)}>CSV Export</button><button onClick={() => setShow(true)} style={{ ...s.btn(), width: "auto" }}>+ Outbound GP</button></div></div>
+      {dispatches.map(d => (
+        <div key={d.id} style={s.card}>
+          <div style={s.rowBetween}><strong>GP ID: {d.gatepass_id}</strong><a href={generateCleanWhatsAppString(d)} target="_blank" rel="noreferrer" style={{ color: clr.green, fontSize: 11, fontWeight: 700, textDecoration: "none" }}>WhatsApp Manifest</a></div>
+          <div style={{ fontSize: 12, color: clr.muted }}>Vehicle: {d.vehicle_number} | Transporter: {d.transport_name}</div>
+          {d.items?.map((i, index) => (
+            <div key={index} style={{ ...s.card2, background: clr.card2, marginTop: 4, fontSize: 11 }}>
+              Lot: <strong>{i.lot_id}</strong> | {i.variety} ({i.grading}) | {i.manual_bags} Bags | {i.weight}kg
             </div>
-            <div style={{ fontSize: 11, color: clr.muted, marginTop: 4 }}>Vehicle: {d.vehicle_number}</div>
-            <div style={s.divider} />
-            {d.items?.map((i, idx) => (
-              <div key={idx} style={{ fontSize: 11, background: clr.card2, padding: 6, borderRadius: 4, marginBottom: 4 }}>
-                <div style={s.rowBetween}>
-                  <span><strong>Lot: {i.lot_id}</strong></span>
-                  <strong>{i.manual_bags} bags</strong>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", color: clr.muted, fontSize: 10, marginTop: 2 }}>
-                  <span>W: {i.weight}kg | R: ₹{i.rate_per_bag}</span>
-                  <span style={{ color: clr.accent }}>Val: ₹{fmt(i.total_cost)}</span>
-                </div>
-              </div>
-            ))}
-            <div style={{ marginTop: 6, textAlign: "right", fontSize: 12, fontWeight: 700, color: clr.green }}>
-              GP Total Value: ₹{fmt(gpTotal)}
-            </div>
-          </div>
-        );
-      })}
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title={editItem ? "Edit Dispatch" : "New Dispatch"}>
-        <Field label="Gatepass ID"><input style={s.input} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} placeholder="GP-001" /></Field>
-        <Field label="Vehicle Number"><input style={s.input} value={form.vehicle_number} onChange={e => setForm({ ...form, vehicle_number: e.target.value })} placeholder="MH-12-AB-1234" /></Field>
-        <Field label="Destination - Party"><select style={s.select} value={form.destination_party_id} onChange={e => setForm({ ...form, destination_party_id: e.target.value })}><option value="">Select</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
-        <Field label="Destination - Mandi"><select style={s.select} value={form.destination_mandi_id} onChange={e => setForm({ ...form, destination_mandi_id: e.target.value })}><option value="">Select</option>{mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
-
-        <div style={{ ...s.card2, background: clr.card, marginBottom: 10, padding: 8 }}>
-          <div style={s.label}>Add Lots (With Full Purchase Metrics)</div>
-          <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_id} onChange={e => { 
-            const lot = purchases.find(p => p.lot_id === e.target.value); 
-            setItemForm({ 
-              lot_id: e.target.value, 
-              manual_bags: lot?.manual_bags || "", 
-              weight: lot?.total_weight || "",
-              rate_per_bag: lot?.rate_per_bag || "",
-              total_cost: lot?.total_cost || ""
-            }); 
-          }}>
-            <option value="">Select Lot</option>
-            {purchases.filter(p => p.status !== 'closed' || p.lot_id === itemForm.lot_id).map(p => <option key={p.id} value={p.lot_id}>{p.lot_id} - {p.farmer_name} ({p.manual_bags} Bags)</option>)}
-          </select>
-          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Manual Bags" value={itemForm.manual_bags} onChange={e => {
-            const currentBags = parseInt(e.target.value) || 0;
-            const rate = parseFloat(itemForm.rate_per_bag) || 0;
-            setItemForm({ ...itemForm, manual_bags: e.target.value, total_cost: currentBags * rate });
-          }} />
-          <button onClick={addItem} style={{ ...s.btnSm(clr.accent + "22", clr.accent), width: "100%" }}>Add Lot</button>
-        </div>
-
-        {form.items?.length > 0 && (
-          <div style={{ marginBottom: 10 }}>
-            <div style={s.label}>Selected Lots Summary</div>
-            {form.items.map((i, idx) => (
-              <div key={idx} style={{ ...s.card2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: 11 }}>
-                  <strong>{i.lot_id}</strong> - {i.manual_bags} bags (₹{fmt(i.total_cost)})
-                </div>
-                <button onClick={() => removeItem(idx)} style={s.btnSm()}><Icon name="trash" size={10} color={clr.red} /></button>
-              </div>
-            ))}
-            <div style={{ background: clr.green + "15", padding: 8, borderRadius: 6, marginTop: 6, ...s.rowBetween }}>
-              <span style={{ fontSize: 12, fontWeight: 700 }}>Total Load Value:</span>
-              <strong style={{ color: clr.green }}>₹{fmt(totalGatepassValue)}</strong>
-            </div>
-          </div>
-        )}
-
-        <button onClick={save} style={{ ...s.btn(), width: "100%" }}>Save Dispatch</button>
-      </Modal>
-    </div>
-  );
-};
-
-// SALE SCREEN
-const SaleScreen = ({ sales, purchases, ops }) => {
-  const [showForm, setShowForm] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({ gatepass_id: "", date: today(), lot_sales: [], transport: 0, mandi_commission: 0, labor_per_bag: 0, other_expenses: 0 });
-  const [saleItem, setSaleItem] = useState({ lot_id: "", rate_per_kg: "", weight_loss: 0 });
-
-  const addSaleItem = () => {
-    if (!saleItem.lot_id || !saleItem.rate_per_kg) return;
-    setForm(p => ({ ...p, lot_sales: [...p.lot_sales, saleItem] }));
-    setSaleItem({ lot_id: "", rate_per_kg: "", weight_loss: 0 });
-  };
-
-  const removeSaleItem = (idx) => {
-    setForm(p => ({ ...p, lot_sales: p.lot_sales.filter((_, i) => i !== idx) }));
-  };
-
-  const handleEdit = (sx) => {
-    setEditItem(sx);
-    setForm({ ...sx });
-    setShowForm(true);
-  };
-
-  const save = async () => {
-    if (!form.gatepass_id || form.lot_sales.length === 0) return alert("Add lots to sale");
-    if (editItem) {
-      await ops.sales.editItem({ ...form, id: editItem.id });
-    } else {
-      await ops.sales.addItem({ ...form, id: uid() });
-    }
-    setShowForm(false);
-    setEditItem(null);
-    setForm({ gatepass_id: "", date: today(), lot_sales: [], transport: 0, mandi_commission: 0, labor_per_bag: 0, other_expenses: 0 });
-  };
-
-  return (
-    <div style={s.content}>
-      <div style={{ ...s.rowBetween, marginBottom: 12 }}>
-        <span style={{ fontWeight: 700, fontSize: 14 }}>Sales</span>
-        <button onClick={() => { setEditItem(null); setShowForm(true); }} style={s.btn(clr.green, "#fff")}><Icon name="add" size={12} color="#fff" /> New</button>
-      </div>
-
-      {sales.map(sx => (
-        <div key={sx.id} style={s.card}>
-          <div style={s.rowBetween}>
-            <Badge v={`GP: ${sx.gatepass_id}`} color={clr.green} />
-            <div style={s.row}>
-              <button onClick={() => handleEdit(sx)} style={s.btnSm()}><Icon name="edit" size={12} color={clr.blue} /></button>
-              <button onClick={() => ops.sales.deleteItem(sx.id)} style={s.btnSm()}><Icon name="trash" size={12} color={clr.red} /></button>
-              <span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(sx.date)}</span>
-            </div>
-          </div>
-          <div style={s.divider} />
-          {sx.lot_sales?.slice(0, 2).map((l, idx) => <div key={idx} style={{ fontSize: 11, marginBottom: 4 }}>{l.lot_id} @ ₹{l.rate_per_kg}/kg</div>)}
+          ))}
         </div>
       ))}
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title={editItem ? "Edit Sale" : "New Sale"}>
-        <Field label="Gatepass ID"><input style={s.input} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} placeholder="GP-001" /></Field>
-
-        <div style={{ ...s.card2, background: clr.card, marginBottom: 10, padding: 8 }}>
-          <div style={s.label}>Add Lot Sale</div>
-          <select style={{ ...s.select, marginBottom: 6 }} value={saleItem.lot_id} onChange={e => setSaleItem({ ...saleItem, lot_id: e.target.value })}>
-            <option value="">Select Lot</option>
-            {purchases.map(p => <option key={p.id} value={p.lot_id}>{p.lot_id}</option>)}
-          </select>
-          <input type="number" step="0.01" style={{ ...s.input, marginBottom: 6 }} placeholder="Rate per kg" value={saleItem.rate_per_kg} onChange={e => setSaleItem({ ...saleItem, rate_per_kg: e.target.value })} />
-          <input type="number" step="0.01" style={{ ...s.input, marginBottom: 6 }} placeholder="Weight Loss (kg)" value={saleItem.weight_loss} onChange={e => setSaleItem({ ...saleItem, weight_loss: e.target.value })} />
-          <button onClick={addSaleItem} style={{ ...s.btnSm(clr.green + "22", clr.green), width: "100%" }}>Add</button>
-        </div>
-
-        {form.lot_sales?.length > 0 && (
-          <div style={{ marginBottom: 10 }}>
-            <div style={s.label}>Sales Summary</div>
-            {form.lot_sales.map((l, idx) => (
-              <div key={idx} style={{ ...s.card2, display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 11 }}>{l.lot_id} @ ₹{l.rate_per_kg}</span>
-                <button onClick={() => removeSaleItem(idx)} style={s.btnSm()}><Icon name="trash" size={10} color={clr.red} /></button>
-              </div>
-            ))}
+      {show && (
+        <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, width: "100%", padding: 12, borderRadius: "12px 12px 0 0", maxHeight: "90vh", overflowY: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginBottom: 6 }}>
+            <div><div style={s.label}>Gatepass Number</div><input style={s.input} placeholder="GP-24001" value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} /></div>
+            <div><div style={s.label}>Vehicle Plate No</div><input style={s.input} placeholder="UP80AB1234" value={form.vehicle_number} onChange={e => setForm({ ...form, vehicle_number: e.target.value })} /></div>
           </div>
-        )}
-
-        <Field label="Transport Charges"><input type="number" step="0.01" style={s.input} value={form.transport} onChange={e => setForm({ ...form, transport: e.target.value })} /></Field>
-        <Field label="Mandi Commission %"><input type="number" step="0.01" style={s.input} value={form.mandi_commission} onChange={e => setForm({ ...form, mandi_commission: e.target.value })} /></Field>
-        <Field label="Labor per Bag"><input type="number" step="0.01" style={s.input} value={form.labor_per_bag} onChange={e => setForm({ ...form, labor_per_bag: e.target.value })} /></Field>
-        <Field label="Other Expenses"><input type="number" step="0.01" style={s.input} value={form.other_expenses} onChange={e => setForm({ ...form, other_expenses: e.target.value })} /></Field>
-
-        <button onClick={save} style={{ ...s.btn(clr.green, "#fff"), width: "100%" }}>Save Sale</button>
-      </Modal>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginBottom: 6 }}>
+            <input style={s.input} placeholder="Driver Name" value={form.driver_name} onChange={e => setForm({ ...form, driver_name: e.target.value })} />
+            <input style={s.input} placeholder="Mobile" value={form.mobile_number} onChange={e => setForm({ ...form, mobile_number: e.target.value })} />
+            <input style={s.input} placeholder="Transport Co." value={form.transport_name} onChange={e => setForm({ ...form, transport_name: e.target.value })} />
+          </div>
+          <div style={{ ...s.card2, background: clr.bg, padding: 8 }}>
+            <div style={s.label}>Interactive Lot Mapping Engine</div>
+            <select style={{ ...s.select, marginBottom: 4 }} value={item.lot_id} onChange={e => setItem({ ...item, lot_id: e.target.value })}><option value="">Select Target Lot</option>{purchases.filter(p => p.status !== 'closed').map(p => <option key={p.id} value={p.lot_id}>{p.lot_id} [{p.variety}]</option>)}</select>
+            {activeLotDetails && (
+              <div style={{ fontSize: 11, color: clr.accent, padding: "2px 0 6px" }}>
+                Farmer: {activeLotDetails.farmer_name} | Variety: {activeLotDetails.variety} | Grade: {activeLotDetails.grading}<br />
+                Available Inventory: {activeLotDetails.manual_bags} Bags ({activeLotDetails.total_weight}kg) | Purchase Price: ₹{activeLotDetails.rate_per_bag}
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginBottom: 4 }}>
+              <input type="number" style={s.input} placeholder="Loaded Bags" value={item.manual_bags} onChange={e => setItem({ ...item, manual_bags: e.target.value })} />
+              <input type="number" style={s.input} placeholder="Loaded Weight (kg)" value={item.weight} onChange={e => setItem({ ...item, weight: e.target.value })} />
+            </div>
+            {item.weight && <div style={{ fontSize: 11, color: clr.green, fontWeight: 700, marginBottom: 4 }}>Live Target Valuation: ₹{fmt(realTimeLotCost.toFixed(2))}</div>}
+            <button onClick={pushLotToGatepass} style={s.btnSm(clr.accent, "#000")}>+ Bind Lot inside GP</button>
+          </div>
+          {form.items.map((i, idx) => <div key={idx} style={{ fontSize: 11, marginTop: 4 }}>Locked Entry: {i.lot_id} | Cost Allocation: ₹{fmt(i.cost_value)}</div>)}
+          <div style={{ display: "flex", gap: 6, marginTop: 12 }}><button onClick={() => setShow(false)} style={s.btnSm()}>Aborted</button><button onClick={executeDispatchFlow} style={s.btn(clr.green, "#fff")}>Authorize Outbound Dispatch</button></div>
+        </div></div>
+      )}
     </div>
   );
 };
 
-// PAYMENT SCREEN
-const PaymentScreen = ({ payments, ops }) => {
-  const [paymentType, setPaymentType] = useState("cold");
-  const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({ gatepass_id: "", amount: "", payment_method: "cash", date: today(), notes: "" });
+// 4. REDESIGNED PROPORTIONAL SALE MODULE
+const SaleScreen = ({ sales, dispatches, purchases, ops }) => {
+  const [show, setShow] = useState(false);
+  const [gatepassInput, setGatepassInput] = useState("");
+  const [loadedLots, setLoadedLots] = useState([]);
+  const [expenses, setExpenses] = useState({ transport: "", commission: "", hamali: "", other: "" });
+  const [rates, setRates] = useState({});
+  const [arrivedWeights, setArrivedWeights] = useState({});
 
-  const handleEdit = (p) => {
-    setEditItem(p);
-    setPaymentType(p.type || "cold");
-    setForm({ ...p });
+  const extractGatepassDataset = () => {
+    const match = dispatches.find(d => d.gatepass_id === gatepassInput);
+    if (!match) return alert("Gatepass Manifest reference error");
+    setLoadedLots(match.items || []);
   };
 
-  const save = async () => {
-    if (!form.gatepass_id || !form.amount) return alert("Fill required fields");
-    const payload = { ...form, type: paymentType, amount: parseFloat(form.amount) };
+  const processMandiSalesLedger = async () => {
+    if (loadedLots.length === 0) return;
     
-    if (editItem) {
-      await ops.payments.editItem({ ...payload, id: editItem.id });
-    } else {
-      await ops.payments.addItem({ ...payload, id: uid() });
-    }
-    setEditItem(null);
-    setForm({ gatepass_id: "", amount: "", payment_method: "cash", date: today(), notes: "" });
+    const combinedWeightMetric = loadedLots.reduce((sum, l) => sum + l.weight, 0);
+    const transportVal = parseFloat(expenses.transport) || 0;
+    const hamaliVal = parseFloat(expenses.hamali) || 0;
+    const otherVal = parseFloat(expenses.other) || 0;
+    
+    const finalSalesArray = loadedLots.map(l => {
+      const parentLotDetails = purchases.find(p => p.lot_id === l.lot_id);
+      const purchasePricePerKg = parentLotDetails ? (parentLotDetails.rate_per_bag / 52.5) : 0;
+      
+      const targetArrivedWeight = parseFloat(arrivedWeights[l.lot_id]) || l.weight;
+      const targetPricePerKg = parseFloat(rates[l.lot_id]) || 0;
+
+      // Weight Shortage calculations
+      const calculatedWeightShortage = l.weight - targetArrivedWeight;
+      const weightShortageFinancialCost = calculatedWeightShortage * purchasePricePerKg;
+      const shortagePercentage = (calculatedWeightShortage / l.weight) * 100;
+
+      // Mandi Industry standard proportional weight allocation rule 
+      const weightProportionRatio = combinedWeightMetric > 0 ? (l.weight / combinedWeightMetric) : 0;
+      
+      const rawGrossSaleValue = targetArrivedWeight * targetPricePerKg;
+      const commissionAmountDeduction = (rawGrossSaleValue * (parseFloat(expenses.commission) || 0)) / 100;
+
+      // Aggregated cash split distribution model
+      const totalLotCashExpenses = transportVal + (hamaliVal * l.manual_bags) + otherVal;
+      const allocatedProportionalExpense = totalLotCashExpenses * weightProportionRatio;
+
+      const netLotProfitability = rawGrossSaleValue - commissionAmountDeduction - l.cost_value - allocatedProportionalExpense - weightShortageFinancialCost;
+
+      return {
+        lot_id: l.lot_id,
+        loaded_bags: l.manual_bags,
+        loaded_weight: l.weight,
+        new_weight: targetArrivedWeight,
+        weight_loss: calculatedWeightShortage,
+        weight_loss_pct: shortagePercentage,
+        weight_loss_cost: weightShortageFinancialCost,
+        allocated_expense: allocatedProportionalExpense,
+        sale_value: rawGrossSaleValue,
+        dispatch_cost: l.cost_value,
+        profit_loss: netLotProfitability
+      };
+    });
+
+    await ops.sales.addItem({ gatepass_id: gatepassInput, lot_sales: finalSalesArray, date: today(), id: uid() });
+    setShow(false);
+    setLoadedLots([]);
+    setGatepassInput("");
+  };
+
+  const saleCSV = () => {
+    const rows = [];
+    sales.forEach(s => s.lot_sales?.forEach(l => rows.push([s.gatepass_id, l.lot_id, l.loaded_bags, l.loaded_weight, l.new_weight, l.weight_loss, l.allocated_expense, l.profit_loss])));
+    triggerCSVDownload("Mandi_Sales_Report", ["Gatepass", "LotID", "Bags", "SentWeight", "RecWeight", "ShortageKG", "AllocExpense", "NetProfit"], rows);
   };
 
   return (
     <div style={s.content}>
-      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-        <button onClick={() => setPaymentType("cold")} style={{ ...s.btn(paymentType === "cold" ? clr.accent : clr.card2, paymentType === "cold" ? "#000" : clr.text), flex: 1 }}>Pay to Cold</button>
-        <button onClick={() => setPaymentType("party")} style={{ ...s.btn(paymentType === "party" ? clr.accent : clr.card2, paymentType === "party" ? "#000" : clr.text), flex: 1 }}>Receive from Party</button>
-      </div>
-
-      <div style={s.card}>
-        <div style={{fontWeight: 700, fontSize: 13, marginBottom: 8}}>{editItem ? "Edit Payment Record" : "New Payment Record"}</div>
-        <Field label="Gatepass ID"><input style={s.input} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} /></Field>
-        <Field label="Amount"><input type="number" step="0.01" style={s.input} value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></Field>
-        <Field label="Payment Method">
-          <select style={s.select} value={form.payment_method} onChange={e => setForm({ ...form, payment_method: e.target.value })}>
-            <option value="cash">Cash</option>
-            <option value="online">Online</option>
-            <option value="bank">Bank</option>
-            <option value="upi">UPI</option>
-            <option value="cheque">Cheque</option>
-          </select>
-        </Field>
-        <Field label="Notes"><input style={s.input} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></Field>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button onClick={save} style={{ ...s.btn(), flex: 1 }}>{editItem ? "Update Payment" : "Record Payment"}</button>
-          {editItem && <button onClick={() => { setEditItem(null); setForm({ gatepass_id: "", amount: "", payment_method: "cash", date: today(), notes: "" }); }} style={s.btn(clr.muted, "#fff")}>Cancel</button>}
-        </div>
-      </div>
-
-      <div style={{ marginTop: 14, fontSize: 11, fontWeight: 700, color: clr.muted, textTransform: "uppercase" }}>Payment Logs</div>
-      {payments.map(p => (
-        <div key={p.id} style={s.card}>
-          <div style={s.rowBetween}>
-            <Badge v={p.type === "cold" ? "PAY" : "RECEIVE"} color={p.type === "cold" ? clr.red : clr.green} />
-            <div style={s.row}>
-              <button onClick={() => handleEdit(p)} style={s.btnSm()}><Icon name="edit" size={11} color={clr.blue} /></button>
-              <button onClick={() => ops.payments.deleteItem(p.id)} style={s.btnSm()}><Icon name="trash" size={11} color={clr.red} /></button>
-              <span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(p.date)}</span>
+      <div style={{ ...s.rowBetween, marginBottom: 12 }}><span style={{ fontWeight: 700 }}>Sales Desk Terminal</span><div style={s.row}><button onClick={saleCSV} style={s.btnSm(clr.blue)}>CSV Export</button><button onClick={() => setShow(true)} style={{ ...s.btn(), width: "auto", background: clr.green, color: "#fff" }}>Punch Gatepass</button></div></div>
+      {sales.map(s => (
+        <div key={s.id} style={s.card}>
+          <div style={{ fontWeight: 700, color: clr.green, fontSize: 13 }}>Gatepass Registry: {s.gatepass_id}</div>
+          {s.lot_sales?.map((l, idx) => (
+            <div key={idx} style={{ fontSize: 12, marginTop: 4, background: clr.card2, padding: 6, borderRadius: 6 }}>
+              Lot <strong>{l.lot_id}</strong> | Loss: {l.weight_loss?.toFixed(2)}kg ({l.weight_loss_pct?.toFixed(2)}%) | Net Return: <span style={{ color: l.profit_loss >= 0 ? clr.green : clr.red, fontWeight: 700 }}>₹{fmt(l.profit_loss?.toFixed(2))}</span>
             </div>
-          </div>
-          <div style={{ fontSize: 12, fontWeight: 600, marginTop: 4 }}>₹{fmt(p.amount)}</div>
-          <div style={{ fontSize: 11, color: clr.muted }}>GP: {p.gatepass_id} | {p.payment_method} {p.notes && `| Note: ${p.notes}`}</div>
+          ))}
         </div>
       ))}
+      {show && (
+        <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, width: "100%", padding: 12, borderRadius: "12px 12px 0 0", maxHeight: "90vh", overflowY: "auto" }}>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}><input style={s.input} placeholder="Input Manifest Gatepass (e.g. GP1002)" value={gatepassInput} onChange={e => setGatepassInput(e.target.value)} /><button onClick={extractGatepassDataset} style={{ ...s.btn(), width: "auto" }}>Fetch</button></div>
+          {loadedLots.map((l, index) => (
+            <div key={index} style={{ ...s.card2, background: clr.bg }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: clr.accent }}>Lot: {l.lot_id} | Dispatch Metric: {l.manual_bags} Bags ({l.weight}kg)</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginTop: 6 }}>
+                <div><div style={s.label}>Received Weight (kg)</div><input type="number" style={s.input} placeholder="Arrived kg" onChange={e => setArrivedWeights({ ...arrivedWeights, [l.lot_id]: e.target.value })} /></div>
+                <div><div style={s.label}>Sale Rate (₹/kg)</div><input type="number" style={s.input} placeholder="Mandi Market Rate" onChange={e => setRates({ ...rates, [l.lot_id]: e.target.value })} /></div>
+              </div>
+            </div>
+          ))}
+          {loadedLots.length > 0 && (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginTop: 8 }}>
+                <div><div style={s.label}>Transport Expenses (₹)</div><input type="number" style={s.input} onChange={e => setExpenses({ ...expenses, transport: e.target.value })} /></div>
+                <div><div style={s.label}>Mandi Commission (%)</div><input type="number" style={s.input} onChange={e => setExpenses({ ...expenses, commission: e.target.value })} /></div>
+                <div><div style={s.label}>Hamali / Bag (₹)</div><input type="number" style={s.input} onChange={e => setExpenses({ ...expenses, hamali: e.target.value })} /></div>
+                <div><div style={s.label}>Other Mandi Outlays (₹)</div><input type="number" style={s.input} onChange={e => setExpenses({ ...expenses, other: e.target.value })} /></div>
+              </div>
+              <button onClick={processMandiSalesLedger} style={{ ...s.btn(clr.green, "#fff"), marginTop: 12 }}>Run Proportional Split Logic</button>
+            </>
+          )}
+        </div></div>
+      )}
     </div>
   );
 };
 
-// STOCK SCREEN
-const StockScreen = ({ purchases, dispatches, sales }) => {
-  const totalStock = purchases.reduce((sum, p) => sum + (parseFloat(p.manual_bags) || 0), 0);
-  const dispatchedBags = dispatches.flatMap(d => d.items || []).reduce((sum, i) => sum + (parseFloat(i.manual_bags) || 0), 0);
-  const remainingBags = totalStock - dispatchedBags;
-
-  const totalValue = purchases.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0);
-  const soldValue = sales.flatMap(s => s.lot_sales || []).reduce((sum, l) => sum + (parseFloat(l.rate_per_kg) || 0), 0);
-  const totalProfit = soldValue - totalValue;
+// 5. IMMUTABLE STOCK MONITOR
+const StockScreen = ({ purchases, dispatches }) => {
+  const purchasedBagsTotal = purchases.reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
+  const dispatchedBagsTotal = dispatches.flatMap(d => d.items || []).reduce((sum, i) => sum + (parseInt(i.manual_bags) || 0), 0);
+  const totalWeightInbound = purchases.reduce((sum, p) => sum + (parseFloat(p.total_weight) || 0), 0);
+  const totalWeightOutbound = dispatches.flatMap(d => d.items || []).reduce((sum, i) => sum + (parseFloat(i.weight) || 0), 0);
 
   return (
     <div style={s.content}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
-        <div style={{ ...s.card, background: clr.blue + "15" }}>
-          <div style={s.label}>Total Bags</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: clr.blue }}>{fmt(totalStock)}</div>
-        </div>
-        <div style={{ ...s.card, background: clr.purple + "15" }}>
-          <div style={s.label}>Remaining</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: clr.purple }}>{fmt(remainingBags)}</div>
-        </div>
-      </div>
-
-      <div style={{ ...s.card, marginBottom: 12 }}>
-        <div style={s.label}>Value Summary</div>
-        <div style={s.divider} />
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6 }}>
-          <span>Purchase Value:</span>
-          <strong>₹{fmt(totalValue)}</strong>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-          <span>Sale Value:</span>
-          <strong style={{ color: clr.green }}>₹{fmt(soldValue)}</strong>
-        </div>
-      </div>
-
-      <div style={{ ...s.card, background: (totalProfit >= 0 ? clr.green : clr.red) + "15" }}>
-        <div style={s.label}>Total Profit/Loss</div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: totalProfit >= 0 ? clr.green : clr.red }}>
-          {totalProfit >= 0 ? "+" : ""}₹{fmt(totalProfit)}
-        </div>
+      <div style={s.card}>
+        <div style={{ fontWeight: 700, color: clr.accent, marginBottom: 8 }}>Mandi Inventory Analytics (Actual Counts)</div>
+        <div style={s.rowBetween}><span>Purchased Bags (Normal):</span><strong>{fmt(purchasedBagsTotal)} Bags</strong></div>
+        <div style={s.rowBetween}><span>Dispatched Bags:</span><strong>{fmt(dispatchedBagsTotal)} Bags</strong></div>
+        <div style={s.rowBetween} style={{ color: clr.green, padding: "4px 0" }}><span>Remaining Balanced Bags:</span><strong>{fmt(purchasedBagsTotal - dispatchedBagsTotal)} Bags</strong></div>
+        <div style={{ height: 1, background: clr.border, margin: "6px 0" }} />
+        <div style={s.rowBetween}><span>Total Bought Weight:</span><strong>{fmt(totalWeightInbound)} kg</strong></div>
+        <div style={s.rowBetween}><span>Total Dispatched Weight:</span><strong>{fmt(totalWeightOutbound)} kg</strong></div>
+        <div style={s.rowBetween} style={{ color: clr.blue }}><span>Net Storage Mass:</span><strong>{fmt(totalWeightInbound - totalWeightOutbound)} kg</strong></div>
       </div>
     </div>
   );
 };
 
-// APP
+// 6. SEARCH HISTORY ENGINE (COMPLETE AUDIT TRAIL)
+const SearchScreen = ({ purchases, dispatches, sales }) => {
+  const [query, setQuery] = useState("");
+  const [trail, setTrail] = useState(null);
+
+  const searchAuditTrail = () => {
+    if (!query) return;
+    const p = purchases.find(x => x.lot_id.toUpperCase() === query.toUpperCase());
+    const d = dispatches.filter(x => x.items?.some(i => i.lot_id.toUpperCase() === query.toUpperCase()));
+    const s = sales.filter(x => x.lot_sales?.some(l => l.lot_id.toUpperCase() === query.toUpperCase()));
+    setTrail({ purchase: p, dispatches: d, sales: s });
+  };
+
+  return (
+    <div style={s.content}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}><input style={s.input} placeholder="Search Lot ID (e.g. LOT001)" value={query} onChange={e => setQuery(e.target.value)} /><button onClick={searchAuditTrail} style={{ ...s.btn(), width: "auto" }}>Scan</button></div>
+      {trail && (
+        <div>
+          {trail.purchase && <div style={s.card}><div style={s.label}>Inbound Origin Trace</div><div>Lot: {trail.purchase.lot_id} | Farmer: {trail.purchase.farmer_name} | Cost Basis Rate: ₹{trail.purchase.rate_per_bag}</div></div>}
+          {trail.dispatches.map((di, idx) => <div key={idx} style={s.card}><div style={s.label}>Transit Step Trace</div><div>Gatepass: {di.gatepass_id} | Vehicle: {di.vehicle_number}</div></div>)}
+          {trail.sales.map((si, idx) => <div key={idx} style={s.card}><div style={s.label}>Final Settlement Trace</div><div>GP Linked: {si.gatepass_id} | Value Generated: ₹{fmt(si.lot_sales?.find(l => l.lot_id.toUpperCase() === query.toUpperCase())?.profit_loss?.toFixed(0))}</div></div>)}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// GLOBAL CONTAINER
 export default function App() {
-  const [activeTab, setActiveTab] = useState("dashboard");
-  const [varieties, opsVarieties] = useSupabaseTable("varieties");
-  const [gradings, opsGradings] = useSupabaseTable("gradings");
-  const [coldStorages, opsColdStorages] = useSupabaseTable("cold_storages");
-  const [mandis, opsMandis] = useSupabaseTable("mandis");
-  const [parties, opsParties] = useSupabaseTable("parties");
+  const [tab, setTab] = useState("dashboard");
   const [purchases, opsPurchases] = useSupabaseTable("purchases");
   const [dispatches, opsDispatches] = useSupabaseTable("dispatches");
   const [sales, opsSales] = useSupabaseTable("sales");
-  const [payments, opsPayments] = useSupabaseTable("payments");
 
-  const ops = { varieties: opsVarieties, gradings: opsGradings, cold_storages: opsColdStorages, mandis: opsMandis, parties: opsParties, purchases: opsPurchases, dispatches: opsDispatches, sales: opsSales, payments: opsPayments };
+  const ops = { purchases: opsPurchases, dispatches: opsDispatches, sales: opsSales };
 
   return (
     <div style={s.screen}>
-      <div style={s.header}>
-        <span style={{ fontWeight: 800, fontSize: 16, color: clr.accent }}>AlooTrader v3</span>
-        <Badge v={activeTab.toUpperCase()} color={clr.blue} />
-      </div>
-
-      {activeTab === "dashboard" && <DashboardScreen purchases={purchases} dispatches={dispatches} sales={sales} />}
-      {activeTab === "purchase" && <PurchaseScreen purchases={purchases} varieties={varieties} gradings={gradings} coldStorages={coldStorages} mandis={mandis} ops={ops} />}
-      {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches} purchases={purchases} mandis={mandis} parties={parties} ops={ops} />}
-      {activeTab === "sale" && <SaleScreen sales={sales} dispatches={dispatches} purchases={purchases} mandis={mandis} parties={parties} ops={ops} />}
-      {activeTab === "payment" && <PaymentScreen payments={payments} ops={ops} />}
-      {activeTab === "stock" && <StockScreen purchases={purchases} dispatches={dispatches} sales={sales} />}
-      {activeTab === "settings" && <MasterScreen varieties={varieties} gradings={gradings} coldStorages={coldStorages} mandis={mandis} parties={parties} ops={ops} />}
-
+      <div style={s.header}><span style={{ fontWeight: 800, color: clr.accent }}>Mandi Business ERP v4</span></div>
+      {tab === "dashboard" && <DashboardScreen purchases={purchases} dispatches={dispatches} sales={sales} />}
+      {tab === "purchase" && <PurchaseScreen purchases={purchases} ops={ops} />}
+      {tab === "dispatch" && <DispatchScreen dispatches={dispatches} purchases={purchases} ops={ops} />}
+      {tab === "sale" && <SaleScreen sales={sales} dispatches={dispatches} purchases={purchases} ops={ops} />}
+      {tab === "stock" && <StockScreen purchases={purchases} dispatches={dispatches} />}
+      {tab === "search" && <SearchScreen purchases={purchases} dispatches={dispatches} sales={sales} />}
+      
       <div style={s.navBar}>
-        <button onClick={() => setActiveTab("dashboard")} style={s.navItem(activeTab === "dashboard")}><Icon name="dashboard" size={12} color={activeTab === "dashboard" ? clr.accent : clr.muted} />Dashboard</button>
-        <button onClick={() => setActiveTab("purchase")} style={s.navItem(activeTab === "purchase")}><Icon name="purchase" size={12} color={activeTab === "purchase" ? clr.accent : clr.muted} />Purchase</button>
-        <button onClick={() => setActiveTab("dispatch")} style={s.navItem(activeTab === "dispatch")}><Icon name="dispatch" size={12} color={activeTab === "dispatch" ? clr.accent : clr.muted} />Dispatch</button>
-        <button onClick={() => setActiveTab("sale")} style={s.navItem(activeTab === "sale")}><Icon name="sale" size={12} color={activeTab === "sale" ? clr.accent : clr.muted} />Sale</button>
-        <button onClick={() => setActiveTab("payment")} style={s.navItem(activeTab === "payment")}><Icon name="payment" size={12} color={activeTab === "payment" ? clr.accent : clr.muted} />Payment</button>
-        <button onClick={() => setActiveTab("stock")} style={s.navItem(activeTab === "stock")}><Icon name="stock" size={12} color={activeTab === "stock" ? clr.accent : clr.muted} />Stock</button>
-        <button onClick={() => setActiveTab("settings")} style={s.navItem(activeTab === "settings")}><Icon name="settings" size={12} color={activeTab === "settings" ? clr.accent : clr.muted} />Master</button>
+        <button onClick={() => setTab("dashboard")} style={s.navItem(tab === "dashboard")}>Home</button>
+        <button onClick={() => setTab("purchase")} style={s.navItem(tab === "purchase")}>Purchase</button>
+        <button onClick={() => setTab("dispatch")} style={s.navItem(tab === "dispatch")}>Dispatch</button>
+        <button onClick={() => setTab("sale")} style={s.navItem(tab === "sale")}>Sales</button>
+        <button onClick={() => setTab("stock")} style={s.navItem(tab === "stock")}>Stock</button>
+        <button onClick={() => setTab("search")} style={s.navItem(tab === "search")}>Track</button>
       </div>
     </div>
   );
