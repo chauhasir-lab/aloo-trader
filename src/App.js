@@ -30,41 +30,46 @@ const useSupabaseTable = (tableName, defaultValue = []) => {
   }, [fetchData]);
 
   const addItem = useCallback(async (item) => {
-    const { id, created_at, ...rest } = item;
-    const formatted = { ...rest, created_at: new Date().toISOString() };
+    // Stringify objects properly before sending to Supabase
+    const formatted = { ...item, created_at: new Date().toISOString() };
     if (formatted.items && typeof formatted.items !== 'string') formatted.items = JSON.stringify(formatted.items);
     if (formatted.lot_sales && typeof formatted.lot_sales !== 'string') formatted.lot_sales = JSON.stringify(formatted.lot_sales);
     if (formatted.expenses && typeof formatted.expenses !== 'string') formatted.expenses = JSON.stringify(formatted.expenses);
     
     const { data: inserted, error } = await supabase.from(tableName).insert([formatted]).select();
-    if (!error && inserted) {
-      fetchData(); // UI refresh ke liye data dubara fetch karein
+    
+    if (!error) {
+      fetchData(); // Sahi se save hote hi poora data database se fresh load hoga
     } else {
-      console.error("Error inserting data:", error);
+      console.error("Supabase Save Error:", error);
+      alert(`Save Failed: ${error.message || error.details}`);
     }
   }, [tableName, fetchData]);
 
   const editItem = useCallback(async (item) => {
-    const { id, created_at, ...rest } = item;
+    const { created_at, ...rest } = item;
     const formatted = { ...rest };
     if (formatted.items && typeof formatted.items !== 'string') formatted.items = JSON.stringify(formatted.items);
     if (formatted.lot_sales && typeof formatted.lot_sales !== 'string') formatted.lot_sales = JSON.stringify(formatted.lot_sales);
     if (formatted.expenses && typeof formatted.expenses !== 'string') formatted.expenses = JSON.stringify(formatted.expenses);
 
-    const { error } = await supabase.from(tableName).update(formatted).eq("id", id);
+    const { error } = await supabase.from(tableName).update(formatted).eq("id", item.id);
     if (!error) {
       fetchData();
     } else {
-      console.error("Error updating data:", error);
+      console.error("Supabase Update Error:", error);
+      alert(`Update Failed: ${error.message}`);
     }
   }, [tableName, fetchData]);
 
   const deleteItem = useCallback(async (id) => {
+    if (!window.confirm("Kya aap sach me delete karna chahte hain?")) return;
     const { error } = await supabase.from(tableName).delete().eq("id", id);
     if (!error) {
       setData(p => p.filter(x => x.id !== id));
     } else {
-      console.error("Error deleting data:", error);
+      console.error("Supabase Delete Error:", error);
+      alert(`Delete Failed: ${error.message}`);
     }
   }, [tableName]);
 
@@ -272,10 +277,19 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, mandis, 
 
   const save = async () => {
     if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag) return alert("Fill required fields");
-    const payload = { ...form, std_bags: stdBags, total_cost: totalCost };
+    
+    // Explicitly send payload with standard calculations
+    const payload = { 
+      ...form, 
+      std_bags: parseFloat(stdBags), 
+      total_cost: parseFloat(totalCost),
+      manual_bags: parseInt(form.manual_bags),
+      total_weight: parseFloat(form.total_weight || 0),
+      rate_per_bag: parseFloat(form.rate_per_bag)
+    };
     
     if (editItem) {
-      await ops.purchases.editItem(payload);
+      await ops.purchases.editItem({ ...payload, id: editItem.id });
     } else {
       await ops.purchases.addItem({ ...payload, id: uid() });
     }
@@ -366,7 +380,7 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
   const save = async () => {
     if (!form.gatepass_id || form.items.length === 0) return alert("Add lots to dispatch");
     if (editItem) {
-      await ops.dispatches.editItem(form);
+      await ops.dispatches.editItem({ ...form, id: editItem.id });
     } else {
       await ops.dispatches.addItem({ ...form, id: uid() });
     }
@@ -458,7 +472,7 @@ const SaleScreen = ({ sales, purchases, ops }) => {
   const save = async () => {
     if (!form.gatepass_id || form.lot_sales.length === 0) return alert("Add lots to sale");
     if (editItem) {
-      await ops.sales.editItem(form);
+      await ops.sales.editItem({ ...form, id: editItem.id });
     } else {
       await ops.sales.addItem({ ...form, id: uid() });
     }
@@ -540,10 +554,10 @@ const PaymentScreen = ({ payments, ops }) => {
 
   const save = async () => {
     if (!form.gatepass_id || !form.amount) return alert("Fill required fields");
-    const payload = { ...form, type: paymentType };
+    const payload = { ...form, type: paymentType, amount: parseFloat(form.amount) };
     
     if (editItem) {
-      await ops.payments.editItem(payload);
+      await ops.payments.editItem({ ...payload, id: editItem.id });
     } else {
       await ops.payments.addItem({ ...payload, id: uid() });
     }
@@ -665,7 +679,7 @@ export default function App() {
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
-      {activeTab === "dashboard" && <DashboardScreen purchases={purchases} dispatches={dispatches} sales={sales} mandis={mandis} parties={parties} />}
+      {activeTab === "dashboard" && <DashboardScreen purchases={purchases} dispatches={dispatches} sales={sales} />}
       {activeTab === "purchase" && <PurchaseScreen purchases={purchases} varieties={varieties} gradings={gradings} coldStorages={coldStorages} mandis={mandis} ops={ops} />}
       {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches} purchases={purchases} mandis={mandis} parties={parties} ops={ops} />}
       {activeTab === "sale" && <SaleScreen sales={sales} dispatches={dispatches} purchases={purchases} mandis={mandis} parties={parties} ops={ops} />}
