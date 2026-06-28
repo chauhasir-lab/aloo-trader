@@ -30,16 +30,14 @@ const useSupabaseTable = (tableName, defaultValue = []) => {
   }, [fetchData]);
 
   const addItem = useCallback(async (item) => {
-    // Stringify objects properly before sending to Supabase
     const formatted = { ...item, created_at: new Date().toISOString() };
     if (formatted.items && typeof formatted.items !== 'string') formatted.items = JSON.stringify(formatted.items);
     if (formatted.lot_sales && typeof formatted.lot_sales !== 'string') formatted.lot_sales = JSON.stringify(formatted.lot_sales);
     if (formatted.expenses && typeof formatted.expenses !== 'string') formatted.expenses = JSON.stringify(formatted.expenses);
     
     const { data: inserted, error } = await supabase.from(tableName).insert([formatted]).select();
-    
     if (!error) {
-      fetchData(); // Sahi se save hote hi poora data database se fresh load hoga
+      fetchData();
     } else {
       console.error("Supabase Save Error:", error);
       alert(`Save Failed: ${error.message || error.details}`);
@@ -193,15 +191,8 @@ const DashboardScreen = ({ purchases, dispatches, sales }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResult, setSearchResult] = useState(null);
 
-  const activeLots = purchases.filter(p => {
-    const dispatched = dispatches.filter(d => d.items?.some(i => i.lot_id === p.lot_id));
-    return dispatched.length === 0;
-  }).length;
-
-  const closedLots = purchases.filter(p => {
-    const saleInfo = sales.find(s => s.lot_sales?.some(l => l.lot_id === p.lot_id));
-    return saleInfo;
-  }).length;
+  const activeLots = purchases.filter(p => p.status !== 'closed').length;
+  const closedLots = purchases.filter(p => p.status === 'closed').length;
 
   const totalStock = purchases.reduce((sum, p) => sum + (parseFloat(p.manual_bags) || 0), 0);
   const totalWeight = purchases.reduce((sum, p) => sum + (parseFloat(p.total_weight) || 0), 0);
@@ -252,7 +243,10 @@ const DashboardScreen = ({ purchases, dispatches, sales }) => {
       <div style={s.label}>Recent Purchases</div>
       {purchases.slice(0, 3).map(p => (
         <div key={p.id} style={s.card2}>
-          <div style={s.rowBetween}><strong style={{ fontSize: 12 }}>{p.lot_id}</strong><span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(p.date)}</span></div>
+          <div style={s.rowBetween}>
+            <strong style={{ fontSize: 12 }}>{p.lot_id}</strong>
+            <span style={s.tag(p.status === 'closed' ? clr.red + "22" : clr.green + "22", p.status === 'closed' ? clr.red : clr.green)}>{p.status || 'open'}</span>
+          </div>
           <div style={{ fontSize: 11, color: clr.muted }}>{p.farmer_name}</div>
         </div>
       ))}
@@ -264,7 +258,7 @@ const DashboardScreen = ({ purchases, dispatches, sales }) => {
 const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, mandis, ops }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", total_cost: "", variety_id: "", grading_id: "", cold_storage_id: "", mandi_id: "", date: today() });
+  const [form, setForm] = useState({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", total_cost: "", variety_id: "", grading_id: "", cold_storage_id: "", mandi_id: "", date: today(), status: "open" });
 
   const stdBags = form.total_weight ? (parseFloat(form.total_weight) / 52.5).toFixed(2) : "0.00";
   const totalCost = (parseFloat(form.manual_bags) || 0) * (parseFloat(form.rate_per_bag) || 0);
@@ -278,7 +272,6 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, mandis, 
   const save = async () => {
     if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag) return alert("Fill required fields");
     
-    // Explicitly send payload with standard calculations
     const payload = { 
       ...form, 
       std_bags: parseFloat(stdBags), 
@@ -295,7 +288,7 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, mandis, 
     }
     setShowForm(false);
     setEditItem(null);
-    setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", total_cost: "", variety_id: "", grading_id: "", cold_storage_id: "", mandi_id: "", date: today() });
+    setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", total_cost: "", variety_id: "", grading_id: "", cold_storage_id: "", mandi_id: "", date: today(), status: "open" });
   };
 
   return (
@@ -308,7 +301,10 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, mandis, 
       {purchases.map(p => (
         <div key={p.id} style={s.card}>
           <div style={s.rowBetween}>
-            <Badge v={p.lot_id} color={clr.accent} />
+            <div style={s.row}>
+              <Badge v={p.lot_id} color={p.status === 'closed' ? clr.red : clr.accent} />
+              <span style={s.tag(p.status === 'closed' ? clr.red + "22" : clr.green + "22", p.status === 'closed' ? clr.red : clr.green)}>{p.status || 'open'}</span>
+            </div>
             <div style={s.row}>
               <button onClick={() => handleEdit(p)} style={s.btnSm()}><Icon name="edit" size={12} color={clr.blue} /></button>
               <button onClick={() => ops.purchases.deleteItem(p.id)} style={s.btnSm()}><Icon name="trash" size={12} color={clr.red} /></button>
@@ -344,6 +340,12 @@ const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, mandis, 
           <div style={s.label}>Total Cost</div>
           <div style={{ fontWeight: 700, fontSize: 14, color: clr.accent }}>₹{fmt(totalCost)}</div>
         </div>
+        <Field label="Status">
+          <select style={s.select} value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+            <option value="open">Open</option>
+            <option value="closed">Closed</option>
+          </select>
+        </Field>
         <Field label="Variety"><select style={s.select} value={form.variety_id} onChange={e => setForm({ ...form, variety_id: e.target.value })}><option value="">Select</option>{varieties.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
         <Field label="Grading"><select style={s.select} value={form.grading_id} onChange={e => setForm({ ...form, grading_id: e.target.value })}><option value="">Select</option>{gradings.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
         <Field label="Cold Storage"><select style={s.select} value={form.cold_storage_id} onChange={e => setForm({ ...form, cold_storage_id: e.target.value })}><option value="">Select</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
@@ -359,17 +361,20 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", destination_party_id: "", destination_mandi_id: "", items: [], date: today() });
-  const [itemForm, setItemForm] = useState({ lot_id: "", manual_bags: "", weight: "" });
+  const [itemForm, setItemForm] = useState({ lot_id: "", manual_bags: "", weight: "", rate_per_bag: "", total_cost: "" });
 
   const addItem = () => {
     if (!itemForm.lot_id || !itemForm.manual_bags) return;
-    setForm(p => ({ ...p, items: [...p.items, itemForm] }));
-    setItemForm({ lot_id: "", manual_bags: "", weight: "" });
+    setForm(p => ({ ...p, items: [...p.items, { ...itemForm, manual_bags: parseInt(itemForm.manual_bags), weight: parseFloat(itemForm.weight || 0), rate_per_bag: parseFloat(itemForm.rate_per_bag || 0), total_cost: parseFloat(itemForm.total_cost || 0) }] }));
+    setItemForm({ lot_id: "", manual_bags: "", weight: "", rate_per_bag: "", total_cost: "" });
   };
 
   const removeItem = (idx) => {
     setForm(p => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
   };
+
+  // Live total dispatch gatepass value sum tracker
+  const totalGatepassValue = form.items?.reduce((sum, item) => sum + (item.total_cost || 0), 0) || 0;
 
   const handleEdit = (d) => {
     setEditItem(d);
@@ -379,11 +384,33 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
 
   const save = async () => {
     if (!form.gatepass_id || form.items.length === 0) return alert("Add lots to dispatch");
+    
+    // Main Add / Edit Functionality Trigger
     if (editItem) {
       await ops.dispatches.editItem({ ...form, id: editItem.id });
     } else {
       await ops.dispatches.addItem({ ...form, id: uid() });
     }
+
+    // --- AUTO LOT CLOSE CHECK SYSTEM ---
+    for (const item of form.items) {
+      const matchPurchase = purchases.find(p => p.lot_id === item.lot_id);
+      if (matchPurchase) {
+        const alreadyDispatchedBags = dispatches
+          .filter(d => d.id !== editItem?.id) 
+          .flatMap(d => d.items || [])
+          .filter(i => i.lot_id === item.lot_id)
+          .reduce((sum, i) => sum + (parseInt(i.manual_bags) || 0), 0);
+
+        const cumulativeDispatched = alreadyDispatchedBags + item.manual_bags;
+
+        if (cumulativeDispatched >= matchPurchase.manual_bags) {
+          await supabase.from("purchases").update({ status: "closed" }).eq("id", matchPurchase.id);
+        }
+      }
+    }
+    ops.purchases.refresh(); // Refresh context dataset maps
+
     setShowForm(false);
     setEditItem(null);
     setForm({ gatepass_id: "", vehicle_number: "", destination_party_id: "", destination_mandi_id: "", items: [], date: today() });
@@ -396,21 +423,38 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
         <button onClick={() => { setEditItem(null); setShowForm(true); }} style={s.btn()}><Icon name="add" size={12} /> New</button>
       </div>
 
-      {dispatches.map(d => (
-        <div key={d.id} style={s.card}>
-          <div style={s.rowBetween}>
-            <Badge v={`GP: ${d.gatepass_id}`} color={clr.blue} />
-            <div style={s.row}>
-              <button onClick={() => handleEdit(d)} style={s.btnSm()}><Icon name="edit" size={12} color={clr.blue} /></button>
-              <button onClick={() => ops.dispatches.deleteItem(d.id)} style={s.btnSm()}><Icon name="trash" size={12} color={clr.red} /></button>
-              <span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(d.date)}</span>
+      {dispatches.map(d => {
+        const gpTotal = d.items?.reduce((sum, i) => sum + (i.total_cost || 0), 0) || 0;
+        return (
+          <div key={d.id} style={s.card}>
+            <div style={s.rowBetween}>
+              <Badge v={`GP: ${d.gatepass_id}`} color={clr.blue} />
+              <div style={s.row}>
+                <button onClick={() => handleEdit(d)} style={s.btnSm()}><Icon name="edit" size={12} color={clr.blue} /></button>
+                <button onClick={() => ops.dispatches.deleteItem(d.id)} style={s.btnSm()}><Icon name="trash" size={12} color={clr.red} /></button>
+                <span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(d.date)}</span>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: clr.muted, marginTop: 4 }}>Vehicle: {d.vehicle_number}</div>
+            <div style={s.divider} />
+            {d.items?.map((i, idx) => (
+              <div key={idx} style={{ fontSize: 11, background: clr.card2, padding: 6, borderRadius: 4, marginBottom: 4 }}>
+                <div style={s.rowBetween}>
+                  <span><strong>Lot: {i.lot_id}</strong></span>
+                  <strong>{i.manual_bags} bags</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: clr.muted, fontSize: 10, marginTop: 2 }}>
+                  <span>W: {i.weight}kg | R: ₹{i.rate_per_bag}</span>
+                  <span style={{ color: clr.accent }}>Val: ₹{fmt(i.total_cost)}</span>
+                </div>
+              </div>
+            ))}
+            <div style={{ marginTop: 6, textAlign: "right", fontSize: 12, fontWeight: 700, color: clr.green }}>
+              GP Total Value: ₹{fmt(gpTotal)}
             </div>
           </div>
-          <div style={{ fontSize: 11, color: clr.muted, marginTop: 4 }}>Vehicle: {d.vehicle_number}</div>
-          <div style={s.divider} />
-          {d.items?.map((i, idx) => <div key={idx} style={{ fontSize: 11, ...s.rowBetween, marginBottom: 4 }}><span>{i.lot_id}</span><strong>{i.manual_bags} bags</strong></div>)}
-        </div>
-      ))}
+        );
+      })}
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title={editItem ? "Edit Dispatch" : "New Dispatch"}>
         <Field label="Gatepass ID"><input style={s.input} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} placeholder="GP-001" /></Field>
@@ -419,24 +463,43 @@ const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
         <Field label="Destination - Mandi"><select style={s.select} value={form.destination_mandi_id} onChange={e => setForm({ ...form, destination_mandi_id: e.target.value })}><option value="">Select</option>{mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
 
         <div style={{ ...s.card2, background: clr.card, marginBottom: 10, padding: 8 }}>
-          <div style={s.label}>Add Lots</div>
-          <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_id} onChange={e => { const lot = purchases.find(p => p.lot_id === e.target.value); setItemForm({ lot_id: e.target.value, manual_bags: lot?.manual_bags || "", weight: lot?.total_weight || "" }); }}>
+          <div style={s.label}>Add Lots (With Full Purchase Metrics)</div>
+          <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_id} onChange={e => { 
+            const lot = purchases.find(p => p.lot_id === e.target.value); 
+            setItemForm({ 
+              lot_id: e.target.value, 
+              manual_bags: lot?.manual_bags || "", 
+              weight: lot?.total_weight || "",
+              rate_per_bag: lot?.rate_per_bag || "",
+              total_cost: lot?.total_cost || ""
+            }); 
+          }}>
             <option value="">Select Lot</option>
-            {purchases.map(p => <option key={p.id} value={p.lot_id}>{p.lot_id} - {p.farmer_name}</option>)}
+            {purchases.filter(p => p.status !== 'closed' || p.lot_id === itemForm.lot_id).map(p => <option key={p.id} value={p.lot_id}>{p.lot_id} - {p.farmer_name} ({p.manual_bags} Bags)</option>)}
           </select>
-          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Manual Bags" value={itemForm.manual_bags} onChange={e => setItemForm({ ...itemForm, manual_bags: e.target.value })} />
+          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Manual Bags" value={itemForm.manual_bags} onChange={e => {
+            const currentBags = parseInt(e.target.value) || 0;
+            const rate = parseFloat(itemForm.rate_per_bag) || 0;
+            setItemForm({ ...itemForm, manual_bags: e.target.value, total_cost: currentBags * rate });
+          }} />
           <button onClick={addItem} style={{ ...s.btnSm(clr.accent + "22", clr.accent), width: "100%" }}>Add Lot</button>
         </div>
 
         {form.items?.length > 0 && (
           <div style={{ marginBottom: 10 }}>
-            <div style={s.label}>Selected Lots</div>
+            <div style={s.label}>Selected Lots Summary</div>
             {form.items.map((i, idx) => (
               <div key={idx} style={{ ...s.card2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 11 }}>{i.lot_id} - {i.manual_bags} bags</span>
+                <div style={{ fontSize: 11 }}>
+                  <strong>{i.lot_id}</strong> - {i.manual_bags} bags (₹{fmt(i.total_cost)})
+                </div>
                 <button onClick={() => removeItem(idx)} style={s.btnSm()}><Icon name="trash" size={10} color={clr.red} /></button>
               </div>
             ))}
+            <div style={{ background: clr.green + "15", padding: 8, borderRadius: 6, marginTop: 6, ...s.rowBetween }}>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>Total Load Value:</span>
+              <strong style={{ color: clr.green }}>₹{fmt(totalGatepassValue)}</strong>
+            </div>
           </div>
         )}
 
