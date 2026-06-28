@@ -67,14 +67,12 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 const clr = { bg: "#0f1117", card: "#1a1d26", card2: "#22263a", accent: "#f5a623", green: "#22c55e", red: "#ef4444", blue: "#3b82f6", purple: "#a855f7", muted: "#6b7280", border: "#2d3148", text: "#f1f5f9" };
 
-// FIXED: Only calculate profit/loss for SOLD lots
 const getLotStatus = (lot, dispatches = [], sales = []) => {
   const totalDispatched = dispatches.flatMap(d => d.items || []).filter(i => i.lot_id === lot.lot_id).reduce((sum, i) => sum + parseFloat(i.bags || 0), 0);
   const totalSold = sales.flatMap(s => s.lot_sales || []).filter(l => l.lot_id === lot.lot_id).reduce((sum, l) => sum + parseFloat(l.bags || 0), 0);
   const effectiveBags = lot.pricing_type === "STD" ? parseFloat(lot.std_bags) : parseFloat(lot.manual_bags);
   const remaining = effectiveBags - totalDispatched;
   
-  // FIXED: Only calculate P&L if lot is actually sold
   const isSold = totalSold > 0;
   let profitLoss = 0;
   if (isSold) {
@@ -97,7 +95,6 @@ const getLotStatus = (lot, dispatches = [], sales = []) => {
   };
 };
 
-// NEW: Get complete lot journey
 const getLotJourney = (lot, dispatches = [], sales = []) => {
   const status = getLotStatus(lot, dispatches, sales);
   const dispatchInfo = dispatches.find(d => d.items?.some(i => i.lot_id === lot.lot_id));
@@ -161,7 +158,6 @@ const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div st
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "85vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}`, margin: "0 auto" }}><div style={{ ...s.rowBetween, padding: 16 }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 16px 24px" }}>{children}</div></div></div>;
 const Badge = ({ v, color = clr.accent }) => <span style={s.tag(color + "22", color)}>{v}</span>;
 
-// --- MASTER SCREEN ---
 const MasterSection = ({ title, items, fields, onAdd, onEdit, onDelete }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -202,7 +198,6 @@ const MasterScreen = ({ varieties, gradings, coldStorages, mandis, parties, ops 
   </div>
 );
 
-// --- DASHBOARD (FIXED) ---
 const DashboardScreen = ({ purchases, dispatches, sales, mandis }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResult, setSearchResult] = useState(null);
@@ -216,7 +211,6 @@ const DashboardScreen = ({ purchases, dispatches, sales, mandis }) => {
     return sum + (status.remaining * 52.5);
   }, 0);
   
-  // FIXED: Only show P&L for sold lots
   const totalProfitLoss = purchases.reduce((sum, p) => {
     const status = getLotStatus(p, dispatches, sales);
     return sum + (status.isSold ? status.profitLoss : 0);
@@ -226,7 +220,6 @@ const DashboardScreen = ({ purchases, dispatches, sales, mandis }) => {
     if (!searchQuery.trim()) return;
     const query = searchQuery.toLowerCase();
     
-    // Search by lot_id, gatepass_id, or truck_no
     let foundLot = null;
     let foundDispatch = null;
     
@@ -244,7 +237,6 @@ const DashboardScreen = ({ purchases, dispatches, sales, mandis }) => {
 
   return (
     <div style={s.content}>
-      {/* SEARCH BAR */}
       <div style={{ marginBottom: 16 }}>
         <div style={s.label}>🔍 लॉट खोजें (Lot ID / Gatepass / Vehicle)</div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -253,7 +245,6 @@ const DashboardScreen = ({ purchases, dispatches, sales, mandis }) => {
         </div>
       </div>
 
-      {/* SEARCH RESULT */}
       {searchResult && (
         <div style={{ ...s.card, background: clr.card2 }}>
           <div style={{ fontWeight: 700, fontSize: 15, color: clr.accent, marginBottom: 10 }}>📋 लॉट विवरण - {searchResult.lotId}</div>
@@ -330,7 +321,6 @@ const DashboardScreen = ({ purchases, dispatches, sales, mandis }) => {
         </div>
       )}
 
-      {/* KPI CARDS */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
         <div style={{ ...s.card2, background: clr.blue + "15" }}>
           <div style={s.label}>सक्रिय लॉट्स</div>
@@ -350,7 +340,6 @@ const DashboardScreen = ({ purchases, dispatches, sales, mandis }) => {
         </div>
       </div>
 
-      {/* P&L CARD - Only for sold lots */}
       {soldLots > 0 && (
         <div style={{ ...s.card2, background: (totalProfitLoss >= 0 ? clr.green : clr.red) + "15" }}>
           <div style={s.label}>शुद्ध P&L (केवल बेचे हुए लॉट)</div>
@@ -363,7 +352,6 @@ const DashboardScreen = ({ purchases, dispatches, sales, mandis }) => {
   );
 };
 
-// --- PURCHASE SCREEN (IMPROVED) ---
 const PurchaseScreen = ({ purchases, varieties, coldStorages, dispatches, sales, ops }) => {
   const [form, setForm] = useState({ lot_id: "", kisan_name: "", cold_storage_id: "", date: today(), variety_id: "", manual_bags: "", total_weight: "", rate: "", notes: "", pricing_type: "STD" });
   const [showForm, setShowForm] = useState(false);
@@ -401,7 +389,6 @@ const PurchaseScreen = ({ purchases, varieties, coldStorages, dispatches, sales,
             
             <div style={s.divider} />
             
-            {/* WEIGHT INFO */}
             <div style={{ marginBottom: 10 }}>
               <span style={s.label}>वजन विवरण</span>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
@@ -411,7 +398,6 @@ const PurchaseScreen = ({ purchases, varieties, coldStorages, dispatches, sales,
               </div>
             </div>
 
-            {/* COST INFO */}
             <div style={{ background: clr.card2, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>
               <div style={s.label}>लागत विवरण</div>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
@@ -424,7 +410,6 @@ const PurchaseScreen = ({ purchases, varieties, coldStorages, dispatches, sales,
               </div>
             </div>
 
-            {/* STATUS */}
             <div style={{ fontSize: 12, color: clr.muted }}>
               <span style={{ color: clr.blue }}>📤 भेजे गए: {status.totalDispatched} कट्टे</span>
               <span style={{ marginLeft: 12, color: clr.green }}>✓ बचा हुआ: {fmt(status.remaining, 1)} कट्टे</span>
@@ -456,9 +441,8 @@ const PurchaseScreen = ({ purchases, varieties, coldStorages, dispatches, sales,
           <Field label="कट्टों की संख्या"><input type="number" style={s.input} value={form.manual_bags} onChange={e => setForm({ ...form, manual_bags: e.target.value })} /></Field>
         )}
 
-        <Field label="रेट (₹/{form.pricing_type === "STD" ? "STD" : "Manual"})"><input type="number" step="0.01" style={s.input} value={form.rate} onChange={e => setForm({ ...form, rate: e.target.value })} placeholder="500" /></Field>
+        <Field label={`रेट (₹/${form.pricing_type === "STD" ? "STD" : "Manual"})`}><input type="number" step="0.01" style={s.input} value={form.rate} onChange={e => setForm({ ...form, rate: e.target.value })} placeholder="500" /></Field>
 
-        {/* COST PREVIEW */}
         <div style={{ background: clr.card2, padding: 10, borderRadius: 8, marginBottom: 12 }}>
           <div style={s.label}>कुल लागत (पूर्वावलोकन)</div>
           <div style={{ fontSize: 18, fontWeight: 800, color: clr.accent }}>₹{fmt(totalAmt)}</div>
@@ -487,7 +471,6 @@ const PurchaseScreen = ({ purchases, varieties, coldStorages, dispatches, sales,
   );
 };
 
-// --- DISPATCH SCREEN (IMPROVED) ---
 const DispatchScreen = ({ dispatches, purchases, mandis, sales, ops }) => {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ gatepass_id: "", date: today(), mandi_id: "", driver_name: "", truck_no: "", items: [] });
@@ -502,8 +485,6 @@ const DispatchScreen = ({ dispatches, purchases, mandis, sales, ops }) => {
     
     const status = getLotStatus(lot, dispatches, sales);
     const effectiveBags = lot.pricing_type === "STD" ? parseFloat(lot.std_bags) : parseFloat(lot.manual_bags);
-    
-    // Auto-fill with remaining bags
     const remaining = effectiveBags - status.totalDispatched;
     
     setForm(p => ({ ...p, items: [...p.items, { lot_id: itemForm.lot_id, bags: remaining, weight: lot.total_weight }] }));
@@ -571,7 +552,6 @@ const DispatchScreen = ({ dispatches, purchases, mandis, sales, ops }) => {
           </select>
         </Field>
 
-        {/* LOT SELECTION */}
         <div style={{ ...s.card2, background: clr.card, marginBottom: 12, padding: 12, borderRadius: 8 }}>
           <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8, color: clr.accent }}>📦 लॉट जोड़ें</div>
           <select style={{ ...s.select, marginBottom: 8 }} value={itemForm.lot_id} onChange={e => setItemForm({ ...itemForm, lot_id: e.target.value })}>
@@ -610,7 +590,6 @@ const DispatchScreen = ({ dispatches, purchases, mandis, sales, ops }) => {
           <button onClick={addItemRow} style={{ ...s.btnSm(), width: "100%", background: clr.accent + "22", color: clr.accent }}>लॉट जोड़ें</button>
         </div>
 
-        {/* SELECTED ITEMS */}
         {form.items.length > 0 && (
           <div style={{ marginBottom: 12 }}>
             <div style={s.label}>जोड़े गए लॉट्स</div>
@@ -633,7 +612,6 @@ const DispatchScreen = ({ dispatches, purchases, mandis, sales, ops }) => {
   );
 };
 
-// --- SALES SCREEN ---
 const SalesScreen = ({ sales, purchases, dispatches, parties, ops }) => {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ bijak_id: "", date: today(), party_id: "", labor_per_bag: 0, lot_sales: [] });
@@ -692,7 +670,6 @@ const SalesScreen = ({ sales, purchases, dispatches, parties, ops }) => {
         </Field>
         <Field label="मजदूरी/कट्टा (खर्च)"><input type="number" step="0.01" style={s.input} value={form.labor_per_bag} onChange={e => setForm({ ...form, labor_per_bag: e.target.value })} /></Field>
 
-        {/* LOT WISE CLOSURE */}
         <div style={{ ...s.card2, background: clr.card, marginBottom: 12, padding: 12, borderRadius: 8 }}>
           <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>📋 लॉट वाइज क्लोजर</div>
           <select style={{ ...s.select, marginBottom: 8 }} value={saleItem.lot_id} onChange={e => setSaleItem({ ...saleItem, lot_id: e.target.value })}>
@@ -704,7 +681,6 @@ const SalesScreen = ({ sales, purchases, dispatches, parties, ops }) => {
           <button onClick={addSaleRow} style={{ ...s.btnSm(), width: "100%", background: clr.green + "22", color: clr.green }}>लॉट जोड़ें</button>
         </div>
 
-        {/* ADDED ITEMS */}
         {form.lot_sales.length > 0 && (
           <div style={{ marginBottom: 12 }}>
             <div style={s.label}>जोड़े गए लॉट्स</div>
@@ -727,7 +703,6 @@ const SalesScreen = ({ sales, purchases, dispatches, parties, ops }) => {
   );
 };
 
-// --- APP CONTAINER ---
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [varieties, opsVarieties] = useSupabaseTable("varieties");
