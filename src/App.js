@@ -1,46 +1,42 @@
-import React, { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-// --- CONFIG & SUPABASE CLIENT ---
 const SUPABASE_URL = "https://cxjmwjljjnuthcrmnbqb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN4am13amxqam51dGhjcm1uYnFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwOTYzMzUsImV4cCI6MjA5MjY3MjMzNX0.ynRaceAT1uWcsPOJ_5vY_8NKolM3EaWKQajUEk4sLz8";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// --- HOOK FOR SUPABASE TABLES ---
 const useSupabaseTable = (tableName, defaultValue = []) => {
   const [data, setData] = useState(defaultValue);
   const [loading, setLoading] = useState(true);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    const { data: rows, error } = await supabase.from(tableName).select("*").order("created_at", { ascending: false });
-    if (!error && rows) {
-      const parsed = rows.map(row => {
-        const r = { ...row };
-        if (r.items && typeof r.items === 'string') try { r.items = JSON.parse(r.items); } catch { r.items = []; }
-        if (r.lot_sales && typeof r.lot_sales === 'string') try { r.lot_sales = JSON.parse(r.lot_sales); } catch { r.lot_sales = []; }
-        return r;
-      });
-      setData(parsed);
-    }
-    setLoading(false);
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      const { data: rows, error } = await supabase.from(tableName).select("*").order("created_at", { ascending: false });
+      if (!error && rows) {
+        const parsed = rows.map(row => {
+          const r = { ...row };
+          if (r.items && typeof r.items === 'string') try { r.items = JSON.parse(r.items); } catch { r.items = []; }
+          if (r.lot_sales && typeof r.lot_sales === 'string') try { r.lot_sales = JSON.parse(r.lot_sales); } catch { r.lot_sales = []; }
+          if (r.expenses && typeof r.expenses === 'string') try { r.expenses = JSON.parse(r.expenses); } catch { r.expenses = {}; }
+          return r;
+        });
+        setData(parsed);
+      }
+      setLoading(false);
+    };
+    fetchData();
   }, [tableName]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
-
   const addItem = useCallback(async (item) => {
-    const { id, created_at, ...rest } = item;
-    const formatted = { ...rest };
+    const { created_at, ...rest } = item;
+    const formatted = { ...rest, created_at: new Date().toISOString() };
     if (formatted.items && typeof formatted.items !== 'string') formatted.items = JSON.stringify(formatted.items);
     if (formatted.lot_sales && typeof formatted.lot_sales !== 'string') formatted.lot_sales = JSON.stringify(formatted.lot_sales);
+    if (formatted.expenses && typeof formatted.expenses !== 'string') formatted.expenses = JSON.stringify(formatted.expenses);
     
     const { data: inserted, error } = await supabase.from(tableName).insert([formatted]).select();
-    if (!error && inserted) {
-      const resp = { ...inserted[0] };
-      if (resp.items && typeof resp.items === 'string') try { resp.items = JSON.parse(resp.items); } catch { resp.items = []; }
-      if (resp.lot_sales && typeof resp.lot_sales === 'string') try { resp.lot_sales = JSON.parse(resp.lot_sales); } catch { resp.lot_sales = []; }
-      setData(p => [resp, ...p]);
-    }
+    if (!error && inserted) setData(p => [inserted[0], ...p]);
   }, [tableName]);
 
   const editItem = useCallback(async (item) => {
@@ -48,6 +44,7 @@ const useSupabaseTable = (tableName, defaultValue = []) => {
     const formatted = { ...rest };
     if (formatted.items && typeof formatted.items !== 'string') formatted.items = JSON.stringify(formatted.items);
     if (formatted.lot_sales && typeof formatted.lot_sales !== 'string') formatted.lot_sales = JSON.stringify(formatted.lot_sales);
+    if (formatted.expenses && typeof formatted.expenses !== 'string') formatted.expenses = JSON.stringify(formatted.expenses);
 
     const { error } = await supabase.from(tableName).update(formatted).eq("id", id);
     if (!error) setData(p => p.map(x => x.id === id ? { ...x, ...item } : x));
@@ -58,567 +55,106 @@ const useSupabaseTable = (tableName, defaultValue = []) => {
     if (!error) setData(p => p.filter(x => x.id !== id));
   }, [tableName]);
 
-  return [data, { addItem, editItem, deleteItem, loading, refresh: fetchData }];
+  return [data, { addItem, editItem, deleteItem, loading }];
 };
 
-// --- CORE ANALYTICAL LOGIC UTILS ---
-const STD_WEIGHT_FACTOR = 52.2;
-
-const fmt = (n, d = 0) => (isNaN(n) || n === null || n === undefined ? "0" : Number(n).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d }));
+const uid = () => Math.random().toString(36).slice(2, 9).toUpperCase();
+const fmt = (n, d = 0) => (isNaN(n) ? "0" : Number(n).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d }));
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN") : "-";
 const today = () => new Date().toISOString().slice(0, 10);
 
 const clr = { bg: "#0f1117", card: "#1a1d26", card2: "#22263a", accent: "#f5a623", green: "#22c55e", red: "#ef4444", blue: "#3b82f6", purple: "#a855f7", muted: "#6b7280", border: "#2d3148", text: "#f1f5f9" };
 
-const getGlobalAnalytics = (purchases, dispatches, sales, payments = []) => {
-  let activeLotsCount = 0;
-  let closedLotsCount = 0;
-  let totalStockBags = 0;
-  let totalStockWeight = 0;
-  let totalGoodsValue = 0;
-  let totalProfitLoss = 0;
-
-  purchases.forEach(p => {
-    const totalDispatched = dispatches.flatMap(d => d.items || []).filter(i => i.lot_id === p.lot_id).reduce((sum, i) => sum + parseFloat(i.bags || 0), 0);
-    const initialBags = parseFloat(p.manual_bags || 0);
-    const remainingBags = Math.max(0, initialBags - totalDispatched);
-    const calculatedAvgWeight = initialBags > 0 ? (p.total_weight / initialBags) : 0;
-    const remainingWeight = remainingBags * calculatedAvgWeight;
-
-    if (remainingBags > 0) {
-      activeLotsCount++;
-      totalStockBags += remainingBags;
-      totalStockWeight += remainingWeight;
-      totalGoodsValue += remainingBags * p.rate;
-    } else {
-      closedLotsCount++;
-    }
-
-    const saleMatches = sales.flatMap(s => s.lot_sales || []).filter(l => l.lot_id === p.lot_id);
-    if (saleMatches.length > 0) {
-      const soldValue = saleMatches.reduce((sum, sm) => sum + (sm.weight * sm.rate_per_kg), 0);
-      const parentBijaks = sales.filter(s => s.lot_sales?.some(l => l.lot_id === p.lot_id));
-      
-      let allocatedExpenses = 0;
-      parentBijaks.forEach(bj => {
-        const totalLotsInBijak = bj.lot_sales?.length || 1;
-        const totalLaborCost = (bj.lot_sales?.reduce((s, l) => s + (l.bags || 0), 0) || 0) * (bj.labor_per_bag || 0);
-        const commissionCost = (bj.lot_sales?.reduce((s, l) => s + (l.weight * l.rate_per_kg), 0) || 0) * ((bj.mandi_commission_percent || 0) / 100);
-        const totalInvoiceOverhead = (bj.transport_expense || 0) + (bj.other_expenses || 0) + totalLaborCost + commissionCost;
-        allocatedExpenses += (totalInvoiceOverhead / totalLotsInBijak);
-      });
-
-      totalProfitLoss += (soldValue - p.total_cost - allocatedExpenses);
-    }
-  });
-
-  // Financial Dues
-  let partyDues = {};
-  let coldDues = {};
-
-  sales.forEach(s => {
-    const saleTotal = s.lot_sales?.reduce((sum, x) => sum + (x.weight * x.rate_per_kg), 0) || 0;
-    partyDues[s.party_name] = (partyDues[s.party_name] || 0) + saleTotal;
-  });
-
-  dispatches.forEach(d => {
-    const totalGatepassBags = d.items?.reduce((sum, x) => sum + (x.bags || 0), 0) || 0;
-    coldDues[d.cold_storage] = (coldDues[d.cold_storage] || 0) + (totalGatepassBags * 2); // Nominal storage tracking representation
-  });
-
-  payments.forEach(pay => {
-    if (pay.flow_type === "PARTY_RECEIVE") {
-      partyDues[pay.entity_name] = (partyDues[pay.entity_name] || 0) - pay.amount;
-    } else if (pay.flow_type === "COLD_GIVE") {
-      coldDues[pay.entity_name] = (coldDues[pay.entity_name] || 0) - pay.amount;
-    }
-  });
-
-  const aggregatePartyDues = Object.values(partyDues).reduce((a, b) => a + (b > 0 ? b : 0), 0);
-  const aggregateColdDues = Object.values(coldDues).reduce((a, b) => a + (b > 0 ? b : 0), 0);
-
-  return { activeLotsCount, closedLotsCount, totalStockBags, totalStockWeight, totalGoodsValue, totalProfitLoss, aggregatePartyDues, aggregateColdDues, partyDues, coldDues };
+const s = {
+  screen: { minHeight: "100vh", background: clr.bg, color: clr.text, fontFamily: "system-ui, sans-serif", maxWidth: 480, margin: "0 auto", position: "relative" },
+  header: { background: clr.card, padding: "12px 14px", borderBottom: `1px solid ${clr.border}`, position: "sticky", top: 0, zIndex: 100, display: "flex", justifyContent: "space-between", alignItems: "center" },
+  card: { background: clr.card, borderRadius: 10, padding: 12, marginBottom: 8, border: `1px solid ${clr.border}` },
+  card2: { background: clr.card2, borderRadius: 8, padding: 10, marginBottom: 6, border: `1px solid ${clr.border}` },
+  rowBetween: { display: "flex", alignItems: "center", justifyContent: "space-between" },
+  row: { display: "flex", alignItems: "center", gap: 6 },
+  input: { width: "100%", background: clr.card2, border: `1px solid ${clr.border}`, borderRadius: 6, padding: "8px 10px", color: clr.text, fontSize: 13, boxSizing: "border-box", outline: "none" },
+  select: { width: "100%", background: clr.card2, border: `1px solid ${clr.border}`, borderRadius: 6, padding: "8px 10px", color: clr.text, fontSize: 13, boxSizing: "border-box", outline: "none" },
+  label: { fontSize: 10, color: clr.muted, marginBottom: 2, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 },
+  btn: (bg = clr.accent, txt = "#000") => ({ background: bg, color: txt, border: "none", borderRadius: 6, padding: "9px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, justifyContent: "center" }),
+  btnSm: (bg = clr.card2, txt = clr.text) => ({ background: bg, color: txt, border: `1px solid ${clr.border}`, borderRadius: 5, padding: "5px 8px", fontWeight: 600, fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }),
+  tag: (bg = clr.accent + "22", txt = clr.accent) => ({ background: bg, color: txt, borderRadius: 4, padding: "2px 6px", fontSize: 10, fontWeight: 700 }),
+  content: { padding: 12, paddingBottom: 80 },
+  navBar: { position: "fixed", bottom: 0, left: 0, right: 0, maxWidth: 480, margin: "0 auto", background: clr.card, borderTop: `1px solid ${clr.border}`, display: "flex", zIndex: 200 },
+  navItem: (active) => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 4px", gap: 2, background: "none", border: "none", color: active ? clr.accent : clr.muted, fontSize: 9, cursor: "pointer" }),
+  divider: { height: 1, background: clr.border, margin: "6px 0" }
 };
 
-// --- ICON INFRASTRUCTURE ---
-const Icon = ({ name, size = 18, color = clr.text }) => {
+const Icon = ({ name, size = 16, color = clr.text }) => {
   const icons = {
+    dashboard: "M3 3h2v2H3V3zm4 0h2v2H7V3zm4 0h2v2h-2V3zm4 0h2v2h-2V3zM3 7h2v2H3V7zm4 0h2v2H7V7zm4 0h2v2h-2V7zm4 0h2v2h-2V7zM3 11h2v2H3v-2zm4 0h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2z",
     purchase: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z",
     dispatch: "M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0",
     sale: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-    master: "M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4",
-    stock: "M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-14L4 7m8 4v10M4 7v10l8 4",
-    payment: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2",
-    search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z", x: "M6 18L18 6M6 6l12 12", trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+    payment: "M3 10h18M7 15h.01M11 15h.01M15 15h.01M7 19h.01M11 19h.01M15 19h.01M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z",
+    stock: "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z",
+    settings: "M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4",
+    add: "M12 4v16m8-8H4",
+    x: "M6 18L18 6M6 6l12 12",
+    trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
+    edit: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
+    search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z",
+    check: "M5 13l4 4L19 7",
+    arrow: "M9 5l7 7-7 7"
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icons[name]} /></svg>;
 };
 
 const Field = ({ label, children }) => <div style={{ marginBottom: 10 }}><div style={s.label}>{label}</div>{children}</div>;
-const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000b", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "16px 16px 0 0", width: "100%", maxWidth: 480, maxHeight: "90vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}`, margin: "0 auto" }}><div style={{ ...s.rowBetween, padding: 14 }}><span style={{ fontWeight: 700, fontSize: 15 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
+const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "16px 16px 0 0", width: "100%", maxWidth: 480, maxHeight: "90vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 12, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 14 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={12} /></button></div><div style={{ overflowY: "auto", padding: "0 12px 16px" }}>{children}</div></div></div>;
+const Badge = ({ v, color = clr.accent }) => <span style={s.tag(color + "22", color)}>{v}</span>;
 
-// --- DYNAMIC MODULE COMPONENT SCREENS ---
-
-const DashboardScreen = ({ purchases, dispatches, sales, payments }) => {
-  const [query, setQuery] = useState("");
-  const [result, setResult] = useState(null);
-
-  const stats = getGlobalAnalytics(purchases, dispatches, sales, payments);
-
-  const executeSearch = () => {
-    if (!query.trim()) return;
-    const key = query.toLowerCase();
-    
-    let matchedLot = purchases.find(p => p.lot_id.toLowerCase() === key);
-    let matchedDispatch = dispatches.find(d => d.gatepass_id.toLowerCase() === key || d.truck_no?.toLowerCase() === key);
-    
-    if (!matchedLot && matchedDispatch && matchedDispatch.items?.length > 0) {
-      matchedLot = purchases.find(p => p.lot_id === matchedDispatch.items[0].lot_id);
-    }
-
-    if (matchedLot) {
-      const associatedDispatch = dispatches.find(d => d.items?.some(i => i.lot_id === matchedLot.lot_id));
-      const associatedSale = sales.find(s => s.lot_sales?.some(l => l.lot_id === matchedLot.lot_id));
-      setResult({ lot: matchedLot, dispatch: associatedDispatch, sale: associatedSale });
-    } else {
-      alert("No Lot, Gatepass or Vehicle profile records found.");
-      setResult(null);
-    }
-  };
-
-  return (
-    <div style={s.content}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-        <div style={s.card}><div style={s.label}>Active Lots</div><div style={{ fontSize: 18, fontWeight: 700, color: clr.blue }}>{stats.activeLotsCount}</div></div>
-        <div style={s.card}><div style={s.label}>Closed Lots</div><div style={{ fontSize: 18, fontWeight: 700, color: clr.muted }}>{stats.closedLotsCount}</div></div>
-        <div style={s.card}><div style={s.label}>Available Stock</div><div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(stats.totalStockBags)} Bags<br/><span style={{ fontSize: 11, color: clr.purple }}>{fmt(stats.totalStockWeight)} kg</span></div></div>
-        <div style={s.card}><div style={s.label}>Goods Value Valuation</div><div style={{ fontSize: 15, fontWeight: 700, color: clr.accent }}> can calculated dynamically: ₹{fmt(stats.totalGoodsValue)}</div></div>
-        <div style={s.card}><div style={s.label}>Party Pending Dues</div><div style={{ fontSize: 16, fontWeight: 700, color: clr.green }}>₹{fmt(stats.aggregatePartyDues)}</div></div>
-        <div style={s.card}><div style={s.label}>Cold Storage Dues</div><div style={{ fontSize: 16, fontWeight: 700, color: clr.red }}>₹{fmt(stats.aggregateColdDues)}</div></div>
-      </div>
-
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          <input style={{ ...s.input, flex: 1 }} placeholder="Search Lot Number / Gatepass / Vehicle..." value={query} onChange={e => setQuery(e.target.value)} />
-          <button onClick={executeSearch} style={{ ...s.btn(clr.accent, "#000"), width: "auto", padding: "0 12px" }}><Icon name="search" size={14} /></button>
-        </div>
-      </div>
-
-      {result && (
-        <div style={{ ...s.card, background: clr.card2 }}>
-          <div style={{ fontWeight: 700, color: clr.accent, marginBottom: 6 }}>Search Inspection Stream</div>
-          <div style={{ fontSize: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-            <div>Lot ID: <b>{result.lot.lot_id}</b></div>
-            <div>Farmer: {result.lot.kisan_name}</div>
-            <div>Bags: {result.lot.manual_bags} | {fmt(result.lot.total_weight)} kg</div>
-            <div>Vehicle: {result.dispatch?.truck_no || "-"}</div>
-            <div>Gatepass: {result.dispatch?.gatepass_id || "-"}</div>
-            <div>Mandi Match: {result.lot.referred_mandi || "-"}</div>
-          </div>
-        </div>
-      )}
-
-      <div style={{ marginTop: 10 }}>
-        <h4 style={{ margin: "0 0 6px 0", fontSize: 12, textTransform: "uppercase", color: clr.muted }}>Recent 3 Purchases</h4>
-        {purchases.slice(0, 3).map(p => (
-          <div key={p.id} style={{ ...s.card2, margin: "2px 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
-            <span><b>{p.lot_id}</b> - {p.kisan_name}</span>
-            <span>{p.manual_bags} Bags / ₹{fmt(p.total_cost)}</span>
-          </div>
-        ))}
-
-        <h4 style={{ margin: "10px 0 6px 0", fontSize: 12, textTransform: "uppercase", color: clr.muted }}>Recent 3 Dispatches</h4>
-        {dispatches.slice(0, 3).map(d => (
-          <div key={d.id} style={{ ...s.card2, margin: "2px 0", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
-            <span><b>{d.gatepass_id}</b> ({d.truck_no})</span>
-            <span>{d.items?.length || 0} Lots Load</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-const PurchaseScreen = ({ purchases, coldStorages, varieties, gradings, mandis, ops }) => {
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ lot_id: "", kisan_name: "", manual_bags: "", total_weight: "", rate: "", variety: "", grading: "", cold_storage: "", referred_mandi: "" });
-
-  const calculatedStdBags = form.total_weight ? (parseFloat(form.total_weight) / STD_WEIGHT_FACTOR).toFixed(2) : 0;
-  const calculatedTotalCost = form.manual_bags && form.rate ? parseFloat(form.manual_bags) * parseFloat(form.rate) : 0;
-
-  const save = async () => {
-    if (!form.lot_id || !form.kisan_name || !form.total_weight || !form.rate) return alert("Fill mandatory indicators");
-    await ops.purchases.addItem({
-      ...form,
-      date: today(),
-      std_bags: parseFloat(calculatedStdBags),
-      total_cost: calculatedTotalCost
-    });
-    setOpen(false);
-    setForm({ lot_id: "", kisan_name: "", manual_bags: "", total_weight: "", rate: "", variety: "", grading: "", cold_storage: "", referred_mandi: "" });
-  };
-
-  return (
-    <div style={s.content}>
-      <button onClick={() => setOpen(true)} style={{ ...s.btn(), marginBottom: 12 }}>+ Record Purchase</button>
-      {purchases.map(p => (
-        <div key={p.id} style={s.card}>
-          <div style={s.rowBetween}>
-            <span style={{ fontWeight: 700 }}>{p.lot_id} - {p.kisan_name}</span>
-            <span style={{ color: clr.accent, fontWeight: 700 }}>₹{fmt(p.total_cost)}</span>
-          </div>
-          <div style={{ fontSize: 12, color: clr.muted, margin: "4px 0" }}>
-            {p.manual_bags} Bags ({fmt(p.total_weight)} kg) @ ₹{p.rate}/Bag | Std: {p.std_bags}
-          </div>
-          <div style={{ fontSize: 11, background: clr.card2, padding: "2px 6px", borderRadius: 4, inlineSize: "fit-content" }}>
-            {p.variety} | {p.grading} | Cold: {p.cold_storage} | Suitability: {p.referred_mandi}
-          </div>
-        </div>
-      ))}
-
-      <Modal open={open} onClose={() => setOpen(false)} title="New Purchase Ledger Entry">
-        <Field label="Unique Lot Identifier Number"><input style={s.input} value={form.lot_id} onChange={e => setForm({ ...form, lot_id: e.target.value })} placeholder="e.g. LOT-101A" /></Field>
-        <Field label="Farmer Name"><input style={s.input} value={form.kisan_name} onChange={e => setForm({ ...form, kisan_name: e.target.value })} /></Field>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-          <Field label="Manual Bag Count"><input type="number" style={s.input} value={form.manual_bags} onChange={e => setForm({ ...form, manual_bags: e.target.value })} /></Field>
-          <Field label="Total Weight (kg)"><input type="number" style={s.input} value={form.total_weight} onChange={e => setForm({ ...form, total_weight: e.target.value })} /></Field>
-        </div>
-        <Field label="Rate per Bag (₹)"><input type="number" style={s.input} value={form.rate} onChange={e => setForm({ ...form, rate: e.target.value })} /></Field>
-        
-        <Field label="Cold Storage Location">
-          <select style={s.select} value={form.cold_storage} onChange={e => setForm({ ...form, cold_storage: e.target.value })}>
-            <option value="">Select Cold</option>
-            {coldStorages.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Variety Classification">
-          <select style={s.select} value={form.variety} onChange={e => setForm({ ...form, variety: e.target.value })}>
-            <option value="">Select Variety</option>
-            {varieties.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Grading Assessment">
-          <select style={s.select} value={form.grading} onChange={e => setForm({ ...form, grading: e.target.value })}>
-            <option value="">Select Grade</option>
-            {gradings.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Mandi Reference Suitability">
-          <select style={s.select} value={form.referred_mandi} onChange={e => setForm({ ...form, referred_mandi: e.target.value })}>
-            <option value="">Select Suitability</option>
-            {mandis.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
-          </select>
-        </Field>
-
-        <div style={{ background: clr.card2, padding: 8, borderRadius: 6, margin: "8px 0" }}>
-          <div style={{ fontSize: 12 }}>Auto Computed Std Bags: <b>{calculatedStdBags}</b></div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: clr.green, marginTop: 2 }}>Est Total Cost: ₹{fmt(calculatedTotalCost)}</div>
-        </div>
-        <button onClick={save} style={s.btn()}>Finalize Purchase</button>
-      </Modal>
-    </div>
-  );
-};
-
-const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
-  const [open, setOpen] = useState(false);
-  const [truckNo, setTruckNo] = useState("");
-  const [gatepass, setGatepass] = useState("");
-  const [targetMandi, setTargetMandi] = useState("");
-  const [targetParty, setTargetParty] = useState("");
-  const [loadItems, setLoadItems] = useState([]);
-
-  const [activeLotId, setActiveLotId] = useState("");
-  const [activeBags, setActiveBags] = useState("");
-  const [activeWeight, setActiveWeight] = useState("");
-
-  const appendLotToVehicle = () => {
-    if (!activeLotId || !activeBags || !activeWeight) return;
-    setLoadItems([...loadItems, { lot_id: activeLotId, bags: parseFloat(activeBags), weight: parseFloat(activeWeight) }]);
-    setActiveLotId(""); setActiveBags(""); setActiveWeight("");
-  };
-
-  const executeDispatch = async () => {
-    if (!truckNo || !gatepass || loadItems.length === 0) return alert("Verify parameters missing");
-    
-    await ops.dispatches.addItem({
-      gatepass_id: gatepass,
-      date: today(),
-      truck_no: truckNo,
-      mandi: targetMandi,
-      party: targetParty,
-      items: loadItems
-    });
-
-    // WhatsApp Message Compilation Generation
-    let textSummary = `Gatepass: ${gatepass}\nVehicle: ${truckNo}\n`;
-    loadItems.forEach(i => { textSummary += `- Lot: ${i.lot_id} | ${i.bags} Bags | ${i.weight} kg\n`; });
-    
-    alert(`⚡ WhatsApp Message Prepared! Click OK to format string popup:\n\n${textSummary}`);
-    window.open(`https://wa.me/?text=${encodeURIComponent(textSummary)}`, "_blank");
-
-    setOpen(false); setTruckNo(""); setGatepass(""); setLoadItems([]);
-  };
-
-  return (
-    <div style={s.content}>
-      <button onClick={() => setOpen(true)} style={{ ...s.btn(), marginBottom: 12 }}>+ Create Gatepass Dispatch</button>
-      {dispatches.map(d => (
-        <div key={d.id} style={s.card}>
-          <div style={s.rowBetween}>
-            <strong>GP: {d.gatepass_id} ({d.truck_no})</strong>
-            <span style={{ fontSize: 11, color: clr.muted }}>{d.date}</span>
-          </div>
-          <div style={{ fontSize: 12, color: clr.blue }}>Dest: {d.party} @ {d.mandi}</div>
-          {d.items?.map((item, idx) => (
-            <div key={idx} style={{ fontSize: 12, background: clr.bg, padding: 4, borderRadius: 4, marginTop: 2 }}>
-              📦 Lot {item.lot_id} | Load: {item.bags} Bags / {item.weight} kg
-            </div>
-          ))}
-        </div>
-      ))}
-
-      <Modal open={open} onClose={() => setOpen(false)} title="Gatepass Multi-Lot Vehicle Loading">
-        <Field label="Manual Gatepass ID Number"><input style={s.input} value={gatepass} onChange={e => setGatepass(e.target.value)} /></Field>
-        <Field label="Vehicle Plate Number"><input style={s.input} value={truckNo} onChange={e => setTruckNo(e.target.value)} /></Field>
-        <Field label="Target Mandi Dest"><select style={s.select} value={targetMandi} onChange={e => setTargetMandi(e.target.value)}>{mandis.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}</select></Field>
-        <Field label="Target Party Receiver"><select style={s.select} value={targetParty} onChange={e => setTargetParty(e.target.value)}>{parties.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}</select></Field>
-
-        <div style={{ background: clr.card2, padding: 8, borderRadius: 6 }}>
-          <div style={s.label}>Append Lot Data Entry</div>
-          <select style={{ ...s.select, marginBottom: 4 }} value={activeLotId} onChange={e => setActiveLotId(e.target.value)}>
-            <option value="">Select Purchase Lot</option>
-            {purchases.map(p => <option key={p.id} value={p.lot_id}>{p.lot_id} ({p.kisan_name})</option>)}
-          </select>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-            <input type="number" placeholder="Load Bags" style={s.input} value={activeBags} onChange={e => setActiveBags(e.target.value)} />
-            <input type="number" placeholder="Load Weight (kg)" style={s.input} value={activeWeight} onChange={e => setActiveWeight(e.target.value)} />
-          </div>
-          <button onClick={appendLotToVehicle} style={{ ...s.btn(clr.purple, "#fff"), height: 32, padding: 0, marginTop: 4, fontSize: 12 }}>+ Add Into Manifest</button>
-        </div>
-
-        {loadItems.map((it, idx) => (
-          <div key={idx} style={{ ...s.rowBetween, background: clr.card2, padding: 6, marginTop: 4, borderRadius: 4 }}>
-            <span style={{ fontSize: 12 }}>{it.lot_id}: {it.bags} B / {it.weight} kg</span>
-            <button onClick={() => setLoadItems(loadItems.filter((_, i) => i !== idx))} style={{ background: "none", border: "none", color: clr.red }}>Remove</button>
-          </div>
-        ))}
-
-        <button onClick={executeDispatch} style={{ ...s.btn(), marginTop: 10 }}>Submit & Pop Message Manifest</button>
-      </Modal>
-    </div>
-  );
-};
-
-const SalesScreen = ({ sales, dispatches, ops }) => {
-  const [open, setOpen] = useState(false);
-  const [gpLookup, setGpLookup] = useState("");
-  const [transport, setTransport] = useState("");
-  const [commission, setCommission] = useState("");
-  const [labor, setLabor] = useState("");
-  const [other, setOther] = useState("");
-  const [lotSalesData, setLotSalesData] = useState([]);
-
-  const loadGatepassManifest = () => {
-    const gp = dispatches.find(d => d.gatepass_id === gpLookup);
-    if (!gp) return alert("Gatepass reference registry matching error");
-    
-    const preparedLots = gp.items?.map(i => ({
-      lot_id: i.lot_id,
-      bags: i.bags,
-      weight: i.weight,
-      rate_per_kg: "",
-      weight_loss_kg: "0"
-    })) || [];
-    setLotSalesData(preparedLots);
-  };
-
-  const processInvoiceBijak = async () => {
-    const matchingGp = dispatches.find(d => d.gatepass_id === gpLookup);
-    await ops.sales.addItem({
-      bijak_id: "BJ-" + uid(),
-      date: today(),
-      gatepass_id: gpLookup,
-      party_name: matchingGp?.party || "Mandi Merchant",
-      transport_expense: parseFloat(transport || 0),
-      mandi_commission_percent: parseFloat(commission || 0),
-      labor_per_bag: parseFloat(labor || 0),
-      other_expenses: parseFloat(other || 0),
-      lot_sales: lotSalesData
-    });
-    setOpen(false);
-  };
-
-  return (
-    <div style={s.content}>
-      <button onClick={() => setOpen(true)} style={{ ...s.btn(), marginBottom: 12 }}>+ Execute Bill Bijak</button>
-      {sales.map(s => (
-        <div key={s.id} style={s.card}>
-          <div style={s.rowBetween}>
-            <strong>Bijak ID: {s.bijak_id} (GP: {s.gatepass_id})</strong>
-            <span style={{ color: clr.green, fontWeight: 700 }}>Party: {s.party_name}</span>
-          </div>
-          {s.lot_sales?.map((ls, idx) => (
-            <div key={idx} style={{ fontSize: 12, background: clr.bg, padding: 4, marginTop: 2, borderRadius: 4 }}>
-              Lot {ls.lot_id} | Sold {ls.weight} kg @ ₹{ls.rate_per_kg}/kg (Loss: {ls.weight_loss_kg} kg)
-            </div>
-          ))}
-        </div>
-      ))}
-
-      <Modal open={open} onClose={() => setOpen(false)} title="Record Sales & Dynamic Cost Dispersion Split">
-        <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
-          <input style={s.input} placeholder="Type Gatepass ID..." value={gpLookup} onChange={e => setGpLookup(e.target.value)} />
-          <button onClick={loadGatepassManifest} style={{ ...s.btn(clr.blue, "#fff"), width: "auto" }}>Pull</button>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-          <Field label="Transport Cost"><input type="number" style={s.input} value={transport} onChange={e => setTransport(e.target.value)} /></Field>
-          <Field label="Mandi Commission %"><input type="number" style={s.input} value={commission} onChange={e => setCommission(e.target.value)} /></Field>
-          <Field label="Labor Cost per Bag"><input type="number" style={s.input} value={labor} onChange={e => setLabor(e.target.value)} /></Field>
-          <Field label="Other Expenses"><input type="number" style={s.input} value={other} onChange={e => setOther(e.target.value)} /></Field>
-        </div>
-
-        {lotSalesData.map((ls, idx) => (
-          <div key={idx} style={{ background: clr.card2, padding: 6, borderRadius: 4, marginTop: 4 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: clr.accent }}>Config Lot Sales Metrics: {ls.lot_id}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginTop: 2 }}>
-              <input type="number" placeholder="Rate/kg (₹)" style={s.input} value={ls.rate_per_kg} 
-                onChange={e => {
-                  const copy = [...lotSalesData];
-                  copy[idx].rate_per_kg = e.target.value;
-                  setLotSalesData(copy);
-                }} 
-              />
-              <input type="number" placeholder="Weight Loss (kg)" style={s.input} value={ls.weight_loss_kg} 
-                onChange={e => {
-                  const copy = [...lotSalesData];
-                  copy[idx].weight_loss_kg = e.target.value;
-                  setLotSalesData(copy);
-                }} 
-              />
-            </div>
-          </div>
-        ))}
-
-        <button onClick={processInvoiceBijak} style={{ ...s.btn(), marginTop: 10 }}>Finalize & Disperse Ledger Breakdown</button>
-      </Modal>
-    </div>
-  );
-};
-
-const PaymentScreen = ({ payments, dispatches, sales, ops }) => {
-  const [open, setOpen] = useState(false);
-  const [flow, setFlow] = useState("PARTY_RECEIVE");
-  const [entity, setEntity] = useState("");
-  const [gpId, setGpId] = useState("");
-  const [amt, setAmt] = useState("");
-  const [mode, setMode] = useState("UPI");
-
-  const savePaymentRecord = async () => {
-    if (!entity || !amt) return alert("Verify numeric bounds parameters");
-    await ops.payments.addItem({
-      date: today(),
-      flow_type: flow,
-      entity_name: entity,
-      gatepass_id: gpId,
-      amount: parseFloat(amt),
-      payment_mode: mode
-    });
-    setOpen(false); setEntity(""); setAmt("");
-  };
-
-  return (
-    <div style={s.content}>
-      <button onClick={() => setOpen(true)} style={{ ...s.btn(), marginBottom: 12 }}>+ Record Payment Flow Ledger</button>
-      {payments.map(p => (
-        <div key={p.id} style={s.card}>
-          <div style={s.rowBetween}>
-            <span style={{ fontWeight: 700, color: p.flow_type === "PARTY_RECEIVE" ? clr.green : clr.red }}>
-              {p.flow_type} — {p.entity_name}
-            </span>
-            <strong>₹{fmt(p.amount)}</strong>
-          </div>
-          <div style={{ fontSize: 11, color: clr.muted }}>
-            Mode: {p.payment_mode} | GP Ref: {p.gatepass_id || "Global Profile"} | {p.date}
-          </div>
-        </div>
-      ))}
-
-      <Modal open={open} onClose={() => setOpen(false)} title="Post Double Entry Financial Transaction Ledger">
-        <Field label="Payment Registry Class">
-          <select style={s.select} value={flow} onChange={e => setFlow(e.target.value)}>
-            <option value="PARTY_RECEIVE">Receive from Mandi Party Merchant</option>
-            <option value="COLD_GIVE">Disburse Remittance to Cold Storage Account</option>
-          </select>
-        </Field>
-        <Field label="Entity Profile Name"><input style={s.input} value={entity} onChange={e => setEntity(e.target.value)} placeholder="Merchant Name or Storage Title" /></Field>
-        <Field label="Associated Gatepass ID Ref (Optional)"><input style={s.input} value={gpId} onChange={e => setGpId(e.target.value)} /></Field>
-        <Field label="Amount Statement Balance Value (₹)"><input type="number" style={s.input} value={amt} onChange={e => setAmt(e.target.value)} /></Field>
-        <Field label="Payment Mode Instrument">
-          <select style={s.select} value={mode} onChange={e => setMode(e.target.value)}>
-            <option value="UPI">UPI Digital Engine</option>
-            <option value="CASH">Liquid Cash Transaction</option>
-            <option value="BANK">Direct Core Bank Wire Transfer</option>
-            <option value="CHEQUE">Bank Instruments Cheque Verification</option>
-          </select>
-        </Field>
-        <button onClick={savePaymentRecord} style={s.btn()}>Authorize Financial Posting Transaction</button>
-      </Modal>
-    </div>
-  );
-};
-
-const StockScreen = ({ purchases, dispatches, sales }) => {
-  return (
-    <div style={s.content}>
-      <h3 style={{ fontSize: 14, textTransform: "uppercase", color: clr.accent, margin: "0 0 10px 0" }}>Inventory Balance Analytics Sheet</h3>
-      {purchases.map(p => {
-        const totalDispatched = dispatches.flatMap(d => d.items || []).filter(i => i.lot_id === p.lot_id).reduce((sum, i) => sum + parseFloat(i.bags || 0), 0);
-        const remBags = Math.max(0, p.manual_bags - totalDispatched);
-        return (
-          <div key={p.id} style={s.card}>
-            <div style={s.rowBetween}>
-              <strong>{p.lot_id} ({p.variety})</strong>
-              <span style={s.tag(remBags > 0 ? clr.blue + "22" : clr.muted + "22", remBags > 0 ? clr.blue : clr.muted)}>
-                {remBags > 0 ? `${remBags} Bags Left` : "Depleted"}
-              </span>
-            </div>
-            <div style={{ fontSize: 12, marginTop: 4, display: "flex", justifyContent: "space-between" }}>
-              <span>Initial: {p.manual_bags} Bags</span>
-              <span>Dispatched: {totalDispatched} Bags</span>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-};
-
-const MasterSection = ({ title, items, fields, onAdd, onDelete }) => {
-  const [open, setOpen] = useState(false);
+// MASTER SCREEN
+const MasterForm = ({ title, items, fields, onAdd, onEdit, onDelete }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
 
+  const save = async () => {
+    if (!form[fields[0].key]?.trim()) return;
+    if (editItem) await onEdit({ ...editItem, ...form });
+    else await onAdd({ id: uid(), ...form, created_at: new Date().toISOString() });
+    setShowForm(false);
+    setForm({});
+    setEditItem(null);
+  };
+
   return (
-    <div style={{ ...s.card, marginBottom: 12 }}>
-      <div style={s.rowBetween}>
-        <span style={{ fontWeight: 700, fontSize: 14 }}>{title}</span>
-        <button onClick={() => setOpen(true)} style={s.btnSm(clr.accent + "22", clr.accent)}>+ Add</button>
+    <div>
+      <div style={{ ...s.rowBetween, marginBottom: 8 }}>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>{title}</span>
+        <button onClick={() => { setEditItem(null); setForm({}); setShowForm(true); }} style={s.btnSm(clr.accent + "22", clr.accent)}>
+          <Icon name="add" size={12} color={clr.accent} /> Add
+        </button>
       </div>
-      <div style={{ marginTop: 6 }}>
-        {items.map(i => (
-          <div key={i.id} style={{ ...s.card2, margin: "3px 0", ...s.rowBetween, padding: "6px 10px" }}>
-            <span style={{ fontSize: 13 }}>{i.name} {i.phone ? `(${i.phone})` : ""}</span>
-            <button onClick={() => onDelete(i.id)} style={{ background: "none", border: "none", color: clr.red, fontSize: 11 }}>Delete</button>
+      {items.length === 0 && <div style={{ color: clr.muted, fontSize: 12, textAlign: "center", padding: 6 }}>No data</div>}
+      {items.map(item => (
+        <div key={item.id} style={{ ...s.card2, ...s.rowBetween }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: 12 }}>{item[fields[0].key]}</div>
+            {fields.slice(1, 2).map(f => item[f.key] && <div key={f.key} style={{ fontSize: 11, color: clr.muted }}>{item[f.key]}</div>)}
           </div>
-        ))}
-      </div>
-      <Modal open={open} onClose={() => setOpen(false)} title={`Create ${title}`}>
+          <div style={s.row}>
+            <button onClick={() => { setEditItem(item); setForm({ ...item }); setShowForm(true); }} style={{ ...s.btnSm(), padding: "4px 6px" }}>
+              <Icon name="edit" size={11} color={clr.blue} />
+            </button>
+            <button onClick={() => onDelete(item.id)} style={{ ...s.btnSm(), padding: "4px 6px" }}>
+              <Icon name="trash" size={11} color={clr.red} />
+            </button>
+          </div>
+        </div>
+      ))}
+      <Modal open={showForm} onClose={() => setShowForm(false)} title={editItem ? "Edit" : "Add"}>
         {fields.map(f => (
           <Field key={f.key} label={f.label}>
-            <input style={s.input} onChange={e => setForm({ ...form, [f.key]: e.target.value })} />
+            <input style={s.input} value={form[f.key] || ""} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder || f.label} />
           </Field>
         ))}
-        <button onClick={() => { onAdd({ ...form, id: Math.random().toString(36).slice(2, 7) }); setOpen(false); }} style={s.btn()}>Save</button>
+        <button onClick={save} style={{ ...s.btn(), width: "100%" }}>Save</button>
       </Modal>
     </div>
   );
@@ -626,53 +162,469 @@ const MasterSection = ({ title, items, fields, onAdd, onDelete }) => {
 
 const MasterScreen = ({ varieties, gradings, coldStorages, mandis, parties, ops }) => (
   <div style={s.content}>
-    <MasterSection title="Parties & Merchants Profiles" items={parties} fields={[{ key: "name", label: "Name" }, { key: "phone", label: "Mobile" }, { key: "address", label: "Address" }, { key: "credit_days", label: "Credit Window Days" }]} onAdd={item => ops.parties.addItem(item)} onDelete={id => ops.parties.deleteItem(id)} />
-    <MasterSection title="Cold Storage Infrastructure" items={coldStorages} fields={[{ key: "name", label: "Name" }, { key: "phone", label: "Mobile Phone" }, { key: "address", label: "Address" }]} onAdd={item => ops.cold_storages.addItem(item)} onDelete={id => ops.cold_storages.deleteItem(id)} />
-    <MasterSection title="Potato Varieties" items={varieties} fields={[{ key: "name", label: "Variety Metric Name" }]} onAdd={item => ops.varieties.addItem(item)} onDelete={id => ops.varieties.deleteItem(id)} />
-    <MasterSection title="Grading Specifications" items={gradings} fields={[{ key: "name", label: "Grade Code" }]} onAdd={item => ops.gradings.addItem(item)} onDelete={id => ops.gradings.deleteItem(id)} />
-    <MasterSection title="Target Mandis Matrix" items={mandis} fields={[{ key: "name", label: "Mandi Location Terminal Name" }]} onAdd={item => ops.mandis.addItem(item)} onDelete={id => ops.mandis.deleteItem(id)} />
+    <MasterForm title="Varieties" items={varieties} fields={[{ key: "name", label: "Variety Name" }]} onAdd={item => ops.varieties.addItem(item)} onEdit={item => ops.varieties.editItem(item)} onDelete={id => ops.varieties.deleteItem(id)} />
+    <MasterForm title="Gradings" items={gradings} fields={[{ key: "name", label: "Grade Name" }]} onAdd={item => ops.gradings.addItem(item)} onEdit={item => ops.gradings.editItem(item)} onDelete={id => ops.gradings.deleteItem(id)} />
+    <MasterForm title="Cold Storages" items={coldStorages} fields={[{ key: "name", label: "Name" }, { key: "phone", label: "Phone" }, { key: "address", label: "Address" }]} onAdd={item => ops.cold_storages.addItem(item)} onEdit={item => ops.cold_storages.editItem(item)} onDelete={id => ops.cold_storages.deleteItem(id)} />
+    <MasterForm title="Mandis" items={mandis} fields={[{ key: "name", label: "Name" }, { key: "phone", label: "Phone" }, { key: "address", label: "Address" }]} onAdd={item => ops.mandis.addItem(item)} onEdit={item => ops.mandis.editItem(item)} onDelete={id => ops.mandis.deleteItem(id)} />
+    <MasterForm title="Parties" items={parties} fields={[{ key: "name", label: "Name" }, { key: "phone", label: "Phone" }, { key: "address", label: "Address" }, { key: "credit_days", label: "Credit Days" }]} onAdd={item => ops.parties.addItem(item)} onEdit={item => ops.parties.editItem(item)} onDelete={id => ops.parties.deleteItem(id)} />
   </div>
 );
 
-// --- MAIN RUNTIME CONTAINER LAYOUT APPLICATION ---
+// DASHBOARD SCREEN
+const DashboardScreen = ({ purchases, dispatches, sales, mandis, parties }) => {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState(null);
+
+  const activeLots = purchases.filter(p => {
+    const dispatched = dispatches.filter(d => d.items?.some(i => i.lot_id === p.lot_id));
+    return dispatched.length === 0;
+  }).length;
+
+  const closedLots = purchases.filter(p => {
+    const saleInfo = sales.find(s => s.lot_sales?.some(l => l.lot_id === p.lot_id));
+    return saleInfo;
+  }).length;
+
+  const totalStock = purchases.reduce((sum, p) => sum + (parseFloat(p.manual_bags) || 0), 0);
+  const totalWeight = purchases.reduce((sum, p) => sum + (parseFloat(p.total_weight) || 0), 0);
+  const totalValue = purchases.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0);
+
+  const handleSearch = () => {
+    const query = searchQuery.toLowerCase();
+    const found = purchases.find(p => p.lot_id.toLowerCase() === query) || 
+                 dispatches.find(d => d.gatepass_id.toLowerCase() === query || d.vehicle_number?.toLowerCase() === query);
+    setSearchResult(found);
+  };
+
+  return (
+    <div style={s.content}>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input style={{ ...s.input, flex: 1 }} placeholder="Search Lot/GP/Vehicle" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyPress={e => e.key === "Enter" && handleSearch()} />
+          <button onClick={handleSearch} style={{ ...s.btn(), padding: "8px 10px" }}><Icon name="search" size={12} /></button>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+        <div style={{ ...s.card2, background: clr.blue + "15" }}><div style={s.label}>Active Lots</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.blue }}>{activeLots}</div></div>
+        <div style={{ ...s.card2, background: clr.red + "15" }}><div style={s.label}>Closed Lots</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.red }}>{closedLots}</div></div>
+        <div style={{ ...s.card2, background: clr.purple + "15" }}><div style={s.label}>Total Bags</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.purple }}>{fmt(totalStock)}</div></div>
+        <div style={{ ...s.card2, background: clr.accent + "15" }}><div style={s.label}>Stock Value</div><div style={{ fontSize: 16, fontWeight: 800, color: clr.accent }}>₹{fmt(totalValue)}</div></div>
+      </div>
+
+      <div style={{ ...s.card, marginBottom: 12 }}>
+        <div style={s.label}>Stock Summary</div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginTop: 6 }}>
+          <span>Weight: <strong>{fmt(totalWeight)} kg</strong></span>
+          <span>Bags: <strong>{fmt(totalStock)}</strong></span>
+        </div>
+      </div>
+
+      {searchResult && (
+        <div style={{ ...s.card, background: clr.card2, marginBottom: 12 }}>
+          <div style={{ fontWeight: 600, color: clr.accent, marginBottom: 6 }}>Search Result: {searchResult.lot_id || searchResult.gatepass_id}</div>
+          <div style={s.divider} />
+          <div style={{ fontSize: 11, color: clr.muted }}>
+            {searchResult.lot_id ? `Lot Date: ${fmtDate(searchResult.date)}` : `Gatepass: ${fmtDate(searchResult.date)}`}
+          </div>
+          <button onClick={() => setSearchResult(null)} style={{ ...s.btn(clr.red, "#fff"), width: "100%", marginTop: 8 }}>Close</button>
+        </div>
+      )}
+
+      <div style={s.label}>Recent Purchases</div>
+      {purchases.slice(0, 3).map(p => (
+        <div key={p.id} style={s.card2}>
+          <div style={s.rowBetween}><strong style={{ fontSize: 12 }}>{p.lot_id}</strong><span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(p.date)}</span></div>
+          <div style={{ fontSize: 11, color: clr.muted }}>{p.farmer_name}</div>
+        </div>
+      ))}
+
+      <div style={{ ...s.label, marginTop: 12 }}>Recent Dispatches</div>
+      {dispatches.slice(0, 3).map(d => (
+        <div key={d.id} style={s.card2}>
+          <div style={s.rowBetween}><strong style={{ fontSize: 12 }}>GP: {d.gatepass_id}</strong><span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(d.date)}</span></div>
+          <div style={{ fontSize: 11, color: clr.muted }}>Vehicle: {d.vehicle_number}</div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// PURCHASE SCREEN
+const PurchaseScreen = ({ purchases, varieties, gradings, coldStorages, mandis, ops }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ lot_id: "", farmer_name: "", mobile: "", manual_bags: "", total_weight: "", rate_per_bag: "", total_cost: "", variety_id: "", grading_id: "", cold_storage_id: "", mandi_id: "", date: today() });
+
+  const stdBags = form.total_weight ? (parseFloat(form.total_weight) / 52.5).toFixed(2) : "0.00";
+  const totalCost = (parseFloat(form.manual_bags) || 0) * (parseFloat(form.rate_per_bag) || 0);
+
+  const save = async () => {
+    if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag) return alert("Fill required fields");
+    await ops.purchases.addItem({ ...form, std_bags: stdBags, total_cost: totalCost, id: uid() });
+    setShowForm(false);
+    setForm({ lot_id: "", farmer_name: "", mobile: "", manual_bags: "", total_weight: "", rate_per_bag: "", total_cost: "", variety_id: "", grading_id: "", cold_storage_id: "", mandi_id: "", date: today() });
+  };
+
+  return (
+    <div style={s.content}>
+      <div style={{ ...s.rowBetween, marginBottom: 12 }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>Purchases</span>
+        <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={12} /> New</button>
+      </div>
+
+      {purchases.map(p => (
+        <div key={p.id} style={s.card}>
+          <div style={s.rowBetween}><Badge v={p.lot_id} color={clr.accent} /><span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(p.date)}</span></div>
+          <div style={{ fontWeight: 600, fontSize: 12, marginTop: 4 }}>{p.farmer_name}</div>
+          <div style={s.divider} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 11, marginBottom: 6 }}>
+            <div><span style={s.label}>Manual Bags</span><div style={{ fontWeight: 600 }}>{p.manual_bags}</div></div>
+            <div><span style={s.label}>Std Bags</span><div style={{ fontWeight: 600 }}>{fmt(p.std_bags, 2)}</div></div>
+            <div><span style={s.label}>Weight</span><div style={{ fontWeight: 600 }}>{p.total_weight} kg</div></div>
+            <div><span style={s.label}>Rate</span><div style={{ fontWeight: 600 }}>₹{p.rate_per_bag}</div></div>
+          </div>
+          <div style={{ background: clr.card2, padding: 6, borderRadius: 4, fontSize: 11 }}>
+            <span style={s.label}>Total Cost</span>
+            <div style={{ fontWeight: 700, color: clr.accent }}>₹{fmt(p.total_cost)}</div>
+          </div>
+        </div>
+      ))}
+
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="New Purchase">
+        <Field label="Lot ID (Unique)"><input style={s.input} value={form.lot_id} onChange={e => setForm({ ...form, lot_id: e.target.value })} placeholder="LOT001" /></Field>
+        <Field label="Farmer Name"><input style={s.input} value={form.farmer_name} onChange={e => setForm({ ...form, farmer_name: e.target.value })} /></Field>
+        <Field label="Mobile"><input style={s.input} value={form.mobile} onChange={e => setForm({ ...form, mobile: e.target.value })} /></Field>
+        <Field label="Manual Bags"><input type="number" style={s.input} value={form.manual_bags} onChange={e => setForm({ ...form, manual_bags: e.target.value })} /></Field>
+        <Field label="Total Weight (kg)"><input type="number" style={s.input} value={form.total_weight} onChange={e => setForm({ ...form, total_weight: e.target.value })} /></Field>
+        <div style={{ ...s.card2, padding: 8, marginBottom: 10 }}>
+          <div style={s.label}>Std Bags (Auto) - 52.5kg</div>
+          <div style={{ fontWeight: 700, color: clr.accent }}>{stdBags}</div>
+        </div>
+        <Field label="Rate per Bag"><input type="number" step="0.01" style={s.input} value={form.rate_per_bag} onChange={e => setForm({ ...form, rate_per_bag: e.target.value })} /></Field>
+        <div style={{ ...s.card2, padding: 8, marginBottom: 10, background: clr.accent + "15" }}>
+          <div style={s.label}>Total Cost</div>
+          <div style={{ fontWeight: 700, fontSize: 14, color: clr.accent }}>₹{fmt(totalCost)}</div>
+        </div>
+        <Field label="Variety"><select style={s.select} value={form.variety_id} onChange={e => setForm({ ...form, variety_id: e.target.value })}><option value="">Select</option>{varieties.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
+        <Field label="Grading"><select style={s.select} value={form.grading_id} onChange={e => setForm({ ...form, grading_id: e.target.value })}><option value="">Select</option>{gradings.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
+        <Field label="Cold Storage"><select style={s.select} value={form.cold_storage_id} onChange={e => setForm({ ...form, cold_storage_id: e.target.value })}><option value="">Select</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+        <Field label="Mandi (Reference)"><select style={s.select} value={form.mandi_id} onChange={e => setForm({ ...form, mandi_id: e.target.value })}><option value="">Select</option>{mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
+        <button onClick={save} style={{ ...s.btn(), width: "100%" }}>Save Purchase</button>
+      </Modal>
+    </div>
+  );
+};
+
+// DISPATCH SCREEN
+const DispatchScreen = ({ dispatches, purchases, mandis, parties, ops }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", destination_party_id: "", destination_mandi_id: "", items: [], date: today() });
+  const [itemForm, setItemForm] = useState({ lot_id: "", manual_bags: "", weight: "" });
+
+  const addItem = () => {
+    if (!itemForm.lot_id || !itemForm.manual_bags) return;
+    setForm(p => ({ ...p, items: [...p.items, itemForm] }));
+    setItemForm({ lot_id: "", manual_bags: "", weight: "" });
+  };
+
+  const removeItem = (idx) => {
+    setForm(p => ({ ...p, items: p.items.filter((_, i) => i !== idx) }));
+  };
+
+  const save = async () => {
+    if (!form.gatepass_id || form.items.length === 0) return alert("Add lots to dispatch");
+    await ops.dispatches.addItem({ ...form, id: uid() });
+    setShowForm(false);
+    setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", destination_party_id: "", destination_mandi_id: "", items: [], date: today() });
+  };
+
+  const generateWhatsAppMessage = () => {
+    const lotList = form.items.map(i => `${i.lot_id}: ${i.manual_bags} bags`).join("\n");
+    return `Dispatch Details\nGatepass: ${form.gatepass_id}\nVehicle: ${form.vehicle_number}\nLots:\n${lotList}`;
+  };
+
+  const handleWhatsApp = () => {
+    const msg = generateWhatsAppMessage();
+    const encodedMsg = encodeURIComponent(msg);
+    const partyPhone = form.destination_party_id ? parties.find(p => p.id === form.destination_party_id)?.phone : "";
+    if (partyPhone) {
+      alert(`Message ready to send:\n\n${msg}\n\nClick OK to copy and share on WhatsApp`);
+      navigator.clipboard.writeText(msg);
+    }
+  };
+
+  return (
+    <div style={s.content}>
+      <div style={{ ...s.rowBetween, marginBottom: 12 }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>Dispatch</span>
+        <button onClick={() => setShowForm(true)} style={s.btn()}><Icon name="add" size={12} /> New</button>
+      </div>
+
+      {dispatches.map(d => (
+        <div key={d.id} style={s.card}>
+          <div style={s.rowBetween}><Badge v={`GP: ${d.gatepass_id}`} color={clr.blue} /><span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(d.date)}</span></div>
+          <div style={{ fontSize: 11, color: clr.muted, marginTop: 4 }}>Vehicle: {d.vehicle_number}</div>
+          <div style={s.divider} />
+          {d.items?.map((i, idx) => <div key={idx} style={{ fontSize: 11, ...s.rowBetween, marginBottom: 4 }}><span>{i.lot_id}</span><strong>{i.manual_bags} bags</strong></div>)}
+        </div>
+      ))}
+
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="New Dispatch">
+        <Field label="Gatepass ID"><input style={s.input} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} placeholder="GP-001" /></Field>
+        <Field label="Vehicle Number"><input style={s.input} value={form.vehicle_number} onChange={e => setForm({ ...form, vehicle_number: e.target.value })} placeholder="MH-12-AB-1234" /></Field>
+        <Field label="Driver Name"><input style={s.input} value={form.driver_name} onChange={e => setForm({ ...form, driver_name: e.target.value })} /></Field>
+        <Field label="Destination - Party"><select style={s.select} value={form.destination_party_id} onChange={e => setForm({ ...form, destination_party_id: e.target.value })}><option value="">Select</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+        <Field label="Destination - Mandi"><select style={s.select} value={form.destination_mandi_id} onChange={e => setForm({ ...form, destination_mandi_id: e.target.value })}><option value="">Select</option>{mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
+
+        <div style={{ ...s.card2, background: clr.card, marginBottom: 10, padding: 8 }}>
+          <div style={s.label}>Add Lots</div>
+          <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_id} onChange={e => { const lot = purchases.find(p => p.lot_id === e.target.value); setItemForm({ lot_id: e.target.value, manual_bags: lot?.manual_bags || "", weight: lot?.total_weight || "" }); }}>
+            <option value="">Select Lot</option>
+            {purchases.map(p => <option key={p.id} value={p.lot_id}>{p.lot_id} - {p.farmer_name}</option>)}
+          </select>
+          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Manual Bags" value={itemForm.manual_bags} onChange={e => setItemForm({ ...itemForm, manual_bags: e.target.value })} />
+          <button onClick={addItem} style={{ ...s.btnSm(clr.accent + "22", clr.accent), width: "100%" }}>Add Lot</button>
+        </div>
+
+        {form.items.length > 0 && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={s.label}>Selected Lots</div>
+            {form.items.map((i, idx) => (
+              <div key={idx} style={{ ...s.card2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 11 }}>{i.lot_id} - {i.manual_bags} bags</span>
+                <button onClick={() => removeItem(idx)} style={s.btnSm()}>
+                  <Icon name="trash" size={10} color={clr.red} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button onClick={save} style={{ ...s.btn(), width: "100%", marginBottom: 8 }}>Save Dispatch</button>
+        {form.items.length > 0 && <button onClick={handleWhatsApp} style={{ ...s.btn(clr.green, "#fff"), width: "100%" }}>WhatsApp Message</button>}
+      </Modal>
+    </div>
+  );
+};
+
+// SALE SCREEN
+const SaleScreen = ({ sales, dispatches, purchases, mandis, parties, ops }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ gatepass_id: "", date: today(), lot_sales: [], transport: 0, mandi_commission: 0, labor_per_bag: 0, other_expenses: 0 });
+  const [saleItem, setSaleItem] = useState({ lot_id: "", rate_per_kg: "", weight_loss: 0 });
+
+  const addSaleItem = () => {
+    if (!saleItem.lot_id || !saleItem.rate_per_kg) return;
+    setForm(p => ({ ...p, lot_sales: [...p.lot_sales, saleItem] }));
+    setSaleItem({ lot_id: "", rate_per_kg: "", weight_loss: 0 });
+  };
+
+  const removeSaleItem = (idx) => {
+    setForm(p => ({ ...p, lot_sales: p.lot_sales.filter((_, i) => i !== idx) }));
+  };
+
+  const save = async () => {
+    if (!form.gatepass_id || form.lot_sales.length === 0) return alert("Add lots to sale");
+    await ops.sales.addItem({ ...form, id: uid() });
+    setShowForm(false);
+    setForm({ gatepass_id: "", date: today(), lot_sales: [], transport: 0, mandi_commission: 0, labor_per_bag: 0, other_expenses: 0 });
+  };
+
+  return (
+    <div style={s.content}>
+      <div style={{ ...s.rowBetween, marginBottom: 12 }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>Sales</span>
+        <button onClick={() => setShowForm(true)} style={s.btn(clr.green, "#fff")}><Icon name="add" size={12} color="#fff" /> New</button>
+      </div>
+
+      {sales.map(sx => (
+        <div key={sx.id} style={s.card}>
+          <div style={s.rowBetween}><Badge v={`GP: ${sx.gatepass_id}`} color={clr.green} /><span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(sx.date)}</span></div>
+          <div style={s.divider} />
+          {sx.lot_sales?.slice(0, 2).map((l, idx) => <div key={idx} style={{ fontSize: 11, marginBottom: 4 }}>{l.lot_id} @ ₹{l.rate_per_kg}/kg</div>)}
+        </div>
+      ))}
+
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="New Sale">
+        <Field label="Gatepass ID"><input style={s.input} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} placeholder="GP-001" /></Field>
+
+        <div style={{ ...s.card2, background: clr.card, marginBottom: 10, padding: 8 }}>
+          <div style={s.label}>Add Lot Sale</div>
+          <select style={{ ...s.select, marginBottom: 6 }} value={saleItem.lot_id} onChange={e => setSaleItem({ ...saleItem, lot_id: e.target.value })}>
+            <option value="">Select Lot</option>
+            {purchases.map(p => <option key={p.id} value={p.lot_id}>{p.lot_id}</option>)}
+          </select>
+          <input type="number" step="0.01" style={{ ...s.input, marginBottom: 6 }} placeholder="Rate per kg" value={saleItem.rate_per_kg} onChange={e => setSaleItem({ ...saleItem, rate_per_kg: e.target.value })} />
+          <input type="number" step="0.01" style={{ ...s.input, marginBottom: 6 }} placeholder="Weight Loss (kg)" value={saleItem.weight_loss} onChange={e => setSaleItem({ ...saleItem, weight_loss: e.target.value })} />
+          <button onClick={addSaleItem} style={{ ...s.btnSm(clr.green + "22", clr.green), width: "100%" }}>Add</button>
+        </div>
+
+        {form.lot_sales.length > 0 && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={s.label}>Sales Summary</div>
+            {form.lot_sales.map((l, idx) => (
+              <div key={idx} style={{ ...s.card2, display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 11 }}>{l.lot_id} @ ₹{l.rate_per_kg}</span>
+                <button onClick={() => removeSaleItem(idx)} style={s.btnSm()}><Icon name="trash" size={10} color={clr.red} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <Field label="Transport Charges"><input type="number" step="0.01" style={s.input} value={form.transport} onChange={e => setForm({ ...form, transport: e.target.value })} /></Field>
+        <Field label="Mandi Commission %"><input type="number" step="0.01" style={s.input} value={form.mandi_commission} onChange={e => setForm({ ...form, mandi_commission: e.target.value })} /></Field>
+        <Field label="Labor per Bag"><input type="number" step="0.01" style={s.input} value={form.labor_per_bag} onChange={e => setForm({ ...form, labor_per_bag: e.target.value })} /></Field>
+        <Field label="Other Expenses"><input type="number" step="0.01" style={s.input} value={form.other_expenses} onChange={e => setForm({ ...form, other_expenses: e.target.value })} /></Field>
+
+        <button onClick={save} style={{ ...s.btn(clr.green, "#fff"), width: "100%" }}>Save Sale</button>
+      </Modal>
+    </div>
+  );
+};
+
+// PAYMENT SCREEN
+const PaymentScreen = ({ purchases, dispatches, sales, coldStorages, parties, ops }) => {
+  const [paymentType, setPaymentType] = useState("cold");
+  const [payments, setPayments] = useState([]);
+  const [form, setForm] = useState({ gatepass_id: "", amount: "", payment_method: "cash", date: today(), notes: "" });
+
+  const save = async () => {
+    if (!form.gatepass_id || !form.amount) return alert("Fill required fields");
+    setPayments(p => [...p, { ...form, id: uid(), type: paymentType }]);
+    setForm({ gatepass_id: "", amount: "", payment_method: "cash", date: today(), notes: "" });
+  };
+
+  return (
+    <div style={s.content}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        <button onClick={() => setPaymentType("cold")} style={{ ...s.btn(paymentType === "cold" ? clr.accent : clr.card2, paymentType === "cold" ? "#000" : clr.text), flex: 1 }}>Pay to Cold</button>
+        <button onClick={() => setPaymentType("party")} style={{ ...s.btn(paymentType === "party" ? clr.accent : clr.card2, paymentType === "party" ? "#000" : clr.text), flex: 1 }}>Receive from Party</button>
+      </div>
+
+      <Field label="Gatepass ID"><input style={s.input} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} /></Field>
+      <Field label="Amount"><input type="number" step="0.01" style={s.input} value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></Field>
+      <Field label="Payment Method">
+        <select style={s.select} value={form.payment_method} onChange={e => setForm({ ...form, payment_method: e.target.value })}>
+          <option value="cash">Cash</option>
+          <option value="online">Online</option>
+          <option value="bank">Bank</option>
+          <option value="upi">UPI</option>
+          <option value="cheque">Cheque</option>
+        </select>
+      </Field>
+      <Field label="Notes"><input style={s.input} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></Field>
+      <button onClick={save} style={{ ...s.btn(), width: "100%", marginBottom: 12 }}>Record Payment</button>
+
+      {payments.map(p => (
+        <div key={p.id} style={s.card}>
+          <div style={s.rowBetween}><Badge v={p.type === "cold" ? "PAY" : "RECEIVE"} color={p.type === "cold" ? clr.red : clr.green} /><span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(p.date)}</span></div>
+          <div style={{ fontSize: 12, fontWeight: 600, marginTop: 4 }}>₹{fmt(p.amount)}</div>
+          <div style={{ fontSize: 11, color: clr.muted }}>GP: {p.gatepass_id} | {p.payment_method}</div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// STOCK SCREEN
+const StockScreen = ({ purchases, dispatches, sales }) => {
+  const totalStock = purchases.reduce((sum, p) => sum + (parseFloat(p.manual_bags) || 0), 0);
+  const dispatchedBags = dispatches.flatMap(d => d.items || []).reduce((sum, i) => sum + (parseFloat(i.manual_bags) || 0), 0);
+  const remainingBags = totalStock - dispatchedBags;
+
+  const totalValue = purchases.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0);
+  const soldValue = sales.flatMap(s => s.lot_sales || []).reduce((sum, l) => sum + (parseFloat(l.rate_per_kg) || 0), 0);
+  const totalProfit = soldValue - totalValue;
+
+  return (
+    <div style={s.content}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+        <div style={{ ...s.card, background: clr.blue + "15" }}>
+          <div style={s.label}>Total Bags</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: clr.blue }}>{fmt(totalStock)}</div>
+        </div>
+        <div style={{ ...s.card, background: clr.purple + "15" }}>
+          <div style={s.label}>Remaining</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: clr.purple }}>{fmt(remainingBags)}</div>
+        </div>
+      </div>
+
+      <div style={{ ...s.card, marginBottom: 12 }}>
+        <div style={s.label}>Value Summary</div>
+        <div style={s.divider} />
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6 }}>
+          <span>Purchase Value:</span>
+          <strong>₹{fmt(totalValue)}</strong>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+          <span>Sale Value:</span>
+          <strong style={{ color: clr.green }}>₹{fmt(soldValue)}</strong>
+        </div>
+      </div>
+
+      <div style={{ ...s.card, background: (totalProfit >= 0 ? clr.green : clr.red) + "15" }}>
+        <div style={s.label}>Total Profit/Loss</div>
+        <div style={{ fontSize: 20, fontWeight: 800, color: totalProfit >= 0 ? clr.green : clr.red }}>
+          {totalProfit >= 0 ? "+" : ""}₹{fmt(totalProfit)}
+        </div>
+      </div>
+
+      <div style={{ ...s.label, marginTop: 16 }}>Stock Details</div>
+      <div style={s.card}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+          <span style={{ fontSize: 12 }}>Total Purchased:</span>
+          <strong>{fmt(totalStock)} bags</strong>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+          <span style={{ fontSize: 12 }}>Dispatched:</span>
+          <strong style={{ color: clr.blue }}>{fmt(dispatchedBags)} bags</strong>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 12 }}>Still in Stock:</span>
+          <strong style={{ color: clr.green }}>{fmt(remainingBags)} bags</strong>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// APP
 export default function App() {
-  const [screen, setScreen] = useState("dash");
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [varieties, opsVarieties] = useSupabaseTable("varieties");
+  const [gradings, opsGradings] = useSupabaseTable("gradings");
+  const [coldStorages, opsColdStorages] = useSupabaseTable("cold_storages");
+  const [mandis, opsMandis] = useSupabaseTable("mandis");
+  const [parties, opsParties] = useSupabaseTable("parties");
+  const [purchases, opsPurchases] = useSupabaseTable("purchases");
+  const [dispatches, opsDispatches] = useSupabaseTable("dispatches");
+  const [sales, opsSales] = useSupabaseTable("sales");
 
-  const [purchases, purchaseOps] = useSupabaseTable("purchases");
-  const [dispatches, dispatchOps] = useSupabaseTable("dispatches");
-  const [sales, saleOps] = useSupabaseTable("sales");
-  const [payments, paymentOps] = useSupabaseTable("payments");
-  const [varieties, varietyOps] = useSupabaseTable("varieties");
-  const [gradings, gradingOps] = useSupabaseTable("gradings");
-  const [coldStorages, storageOps] = useSupabaseTable("cold_storages");
-  const [mandis, mandiOps] = useSupabaseTable("mandis");
-  const [parties, partyOps] = useSupabaseTable("parties");
-
-  const ops = { purchases: purchaseOps, dispatches: dispatchOps, sales: saleOps, payments: paymentOps, varieties: varietyOps, gradings: gradingOps, cold_storages: storageOps, mandis: mandiOps, parties: partyOps };
+  const ops = { varieties: opsVarieties, gradings: opsGradings, cold_storages: opsColdStorages, mandis: opsMandis, parties: opsParties, purchases: opsPurchases, dispatches: opsDispatches, sales: opsSales };
 
   return (
     <div style={s.screen}>
       <div style={s.header}>
-        <span style={{ fontSize: 16, fontWeight: 800, color: clr.accent }}>AlooTrader Terminal v3</span>
-        <span style={s.tag(clr.card2, clr.text)}>2026 Engine</span>
+        <span style={{ fontWeight: 800, fontSize: 16, color: clr.accent }}>AlooTrader v3</span>
+        <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
-      {screen === "dash" && <DashboardScreen purchases={purchases} dispatches={dispatches} sales={sales} payments={payments} />}
-      {screen === "purch" && <PurchaseScreen purchases={purchases} coldStorages={coldStorages} varieties={varieties} gradings={gradings} mandis={mandis} ops={ops} />}
-      {screen === "disp" && <DispatchScreen dispatches={dispatches} purchases={purchases} mandis={mandis} parties={parties} ops={ops} />}
-      {screen === "sale" && <SalesScreen sales={sales} dispatches={dispatches} ops={ops} />}
-      {screen === "pay" && <PaymentScreen payments={payments} dispatches={dispatches} sales={sales} ops={ops} />}
-      {screen === "stock" && <StockScreen purchases={purchases} dispatches={dispatches} sales={sales} />}
-      {screen === "mast" && <MasterScreen varieties={varieties} gradings={gradings} coldStorages={coldStorages} mandis={mandis} parties={parties} ops={ops} />}
+      {activeTab === "dashboard" && <DashboardScreen purchases={purchases} dispatches={dispatches} sales={sales} mandis={mandis} parties={parties} />}
+      {activeTab === "purchase" && <PurchaseScreen purchases={purchases} varieties={varieties} gradings={gradings} coldStorages={coldStorages} mandis={mandis} ops={ops} />}
+      {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches} purchases={purchases} mandis={mandis} parties={parties} ops={ops} />}
+      {activeTab === "sale" && <SaleScreen sales={sales} dispatches={dispatches} purchases={purchases} mandis={mandis} parties={parties} ops={ops} />}
+      {activeTab === "payment" && <PaymentScreen purchases={purchases} dispatches={dispatches} sales={sales} coldStorages={coldStorages} parties={parties} ops={ops} />}
+      {activeTab === "stock" && <StockScreen purchases={purchases} dispatches={dispatches} sales={sales} />}
+      {activeTab === "settings" && <MasterScreen varieties={varieties} gradings={gradings} coldStorages={coldStorages} mandis={mandis} parties={parties} ops={ops} />}
 
       <div style={s.navBar}>
-        <button onClick={() => setScreen("dash")} style={s.navItem(screen === "dash")}><Icon name="search" active={screen === "dash"} />Dash</button>
-        <button onClick={() => setScreen("purch")} style={s.navItem(screen === "purch")}><Icon name="purchase" active={screen === "purch"} />Buy</button>
-        <button onClick={() => setScreen("disp")} style={s.navItem(screen === "disp")}><Icon name="dispatch" active={screen === "disp"} />Load</button>
-        <button onClick={() => setScreen("sale")} style={s.navItem(screen === "sale")}><Icon name="sale" active={screen === "sale"} />Sell</button>
-        <button onClick={() => setScreen("pay")} style={s.navItem(screen === "payment")}><Icon name="payment" active={screen === "pay"} />Pay</button>
-        <button onClick={() => setScreen("stock")} style={s.navItem(screen === "stock")}><Icon name="stock" active={screen === "stock"} />Stock</button>
-        <button onClick={() => setScreen("mast")} style={s.navItem(screen === "mast")}><Icon name="master" active={screen === "mast"} />Setup</button>
+        <button onClick={() => setActiveTab("dashboard")} style={s.navItem(activeTab === "dashboard")}><Icon name="dashboard" size={12} color={activeTab === "dashboard" ? clr.accent : clr.muted} />Dashboard</button>
+        <button onClick={() => setActiveTab("purchase")} style={s.navItem(activeTab === "purchase")}><Icon name="purchase" size={12} color={activeTab === "purchase" ? clr.accent : clr.muted} />Purchase</button>
+        <button onClick={() => setActiveTab("dispatch")} style={s.navItem(activeTab === "dispatch")}><Icon name="dispatch" size={12} color={activeTab === "dispatch" ? clr.accent : clr.muted} />Dispatch</button>
+        <button onClick={() => setActiveTab("sale")} style={s.navItem(activeTab === "sale")}><Icon name="sale" size={12} color={activeTab === "sale" ? clr.accent : clr.muted} />Sale</button>
+        <button onClick={() => setActiveTab("payment")} style={s.navItem(activeTab === "payment")}><Icon name="payment" size={12} color={activeTab === "payment" ? clr.accent : clr.muted} />Payment</button>
+        <button onClick={() => setActiveTab("stock")} style={s.navItem(activeTab === "stock")}><Icon name="stock" size={12} color={activeTab === "stock" ? clr.accent : clr.muted} />Stock</button>
+        <button onClick={() => setActiveTab("settings")} style={s.navItem(activeTab === "settings")}><Icon name="settings" size={12} color={activeTab === "settings" ? clr.accent : clr.muted} />Master</button>
       </div>
     </div>
   );
