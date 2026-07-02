@@ -8,35 +8,116 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const useSupabaseTable = (tableName) => {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const { data: rows } = await supabase.from(tableName).select("*").order("created_at", { ascending: false });
-        if (rows) setData(rows);
-      } catch (e) { console.error(e); }
-      setLoading(false);
+        setLoading(true);
+        setError(null);
+        const { data: rows, error: err } = await supabase.from(tableName).select("*").order("created_at", { ascending: false });
+        if (err) {
+          console.error(`❌ FETCH ERROR (${tableName}):`, err);
+          setError(err.message);
+          return;
+        }
+        if (rows) {
+          console.log(`✅ FETCHED ${tableName}:`, rows.length, "records");
+          // Handle JSON parsing for nested items safely
+          const processedRows = rows.map(row => {
+            if (row.items && typeof row.items === "string") {
+              try { row.items = JSON.parse(row.items); } catch(e) { console.error(e); }
+            }
+            if (row.lot_sales && typeof row.lot_sales === "string") {
+              try { row.lot_sales = JSON.parse(row.lot_sales); } catch(e) { console.error(e); }
+            }
+            return row;
+          });
+          setData(processedRows);
+        }
+      } catch (e) {
+        console.error(`❌ EXCEPTION (${tableName}):`, e);
+        setError(e.message);
+      } finally {
+        setLoading(false);
+      }
     };
     fetchData();
   }, [tableName]);
 
   const addItem = async (item) => {
-    const { data: d } = await supabase.from(tableName).insert([{ ...item, created_at: new Date().toISOString() }]).select();
-    if (d) setData([d[0], ...data]);
-    return d;
+    try {
+      console.log(`📝 ADDING to ${tableName}:`, item);
+      // Stringify structural arrays for database safety
+      const payload = { ...item, created_at: new Date().toISOString() };
+      if (payload.items && typeof payload.items !== "string") payload.items = JSON.stringify(payload.items);
+      if (payload.lot_sales && typeof payload.lot_sales !== "string") payload.lot_sales = JSON.stringify(payload.lot_sales);
+
+      const { data: d, error: err } = await supabase.from(tableName).insert([payload]).select();
+      if (err) {
+        console.error(`❌ INSERT ERROR (${tableName}):`, err);
+        alert(`Error saving: ${err.message}`);
+        return null;
+      }
+      if (d && d.length > 0) {
+        const returnedData = d[0];
+        if (returnedData.items && typeof returnedData.items === "string") returnedData.items = JSON.parse(returnedData.items);
+        if (returnedData.lot_sales && typeof returnedData.lot_sales === "string") returnedData.lot_sales = JSON.parse(returnedData.lot_sales);
+        
+        console.log(`✅ SAVED ${tableName}:`, returnedData);
+        setData([returnedData, ...data]);
+        return returnedData;
+      }
+    } catch (e) {
+      console.error(`❌ ADD EXCEPTION (${tableName}):`, e);
+      alert(`Error: ${e.message}`);
+      return null;
+    }
   };
 
   const editItem = async (id, updates) => {
-    await supabase.from(tableName).update(updates).eq("id", id);
-    setData(data.map(x => x.id === id ? { ...x, ...updates } : x));
+    try {
+      console.log(`✏️ UPDATING ${tableName} ID:`, id, updates);
+      const payload = { ...updates };
+      if (payload.items && typeof payload.items !== "string") payload.items = JSON.stringify(payload.items);
+      if (payload.lot_sales && typeof payload.lot_sales !== "string") payload.lot_sales = JSON.stringify(payload.lot_sales);
+
+      const { error: err } = await supabase.from(tableName).update(payload).eq("id", id);
+      if (err) {
+        console.error(`❌ UPDATE ERROR (${tableName}):`, err);
+        alert(`Error updating: ${err.message}`);
+        return false;
+      }
+      console.log(`✅ UPDATED ${tableName}`);
+      setData(data.map(x => x.id === id ? { ...x, ...updates } : x));
+      return true;
+    } catch (e) {
+      console.error(`❌ EDIT EXCEPTION (${tableName}):`, e);
+      alert(`Error: ${e.message}`);
+      return false;
+    }
   };
 
   const deleteItem = async (id) => {
-    await supabase.from(tableName).delete().eq("id", id);
-    setData(data.filter(x => x.id !== id));
+    try {
+      console.log(`🗑️ DELETING ${tableName} ID:`, id);
+      const { error: err } = await supabase.from(tableName).delete().eq("id", id);
+      if (err) {
+        console.error(`❌ DELETE ERROR (${tableName}):`, err);
+        alert(`Error deleting: ${err.message}`);
+        return false;
+      }
+      console.log(`✅ DELETED ${tableName}`);
+      setData(data.filter(x => x.id !== id));
+      return true;
+    } catch (e) {
+      console.error(`❌ DELETE EXCEPTION (${tableName}):`, e);
+      alert(`Error: ${e.message}`);
+      return false;
+    }
   };
 
-  return { data, loading, addItem, editItem, deleteItem };
+  return { data, loading, error, addItem, editItem, deleteItem };
 };
 
 // UTILITIES
@@ -158,15 +239,27 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings }) =>
   const totalCost = (parseFloat(form.manual_bags) || 0) * (parseFloat(form.rate_per_bag) || 0);
 
   const save = async () => {
-    if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag) return alert("Fill all required fields");
+    if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag) return alert("❌ Fill all required fields!");
+    const currentStdBags = form.total_weight ? (parseFloat(form.total_weight) / 52.5).toFixed(2) : "0.00";
+    const currentTotalCost = (parseFloat(form.manual_bags) || 0) * (parseFloat(form.rate_per_bag) || 0);
+    
     if (editItem) {
-      await opsP.editItem(editItem.id, { ...form, std_bags: stdBags, total_cost: totalCost });
+      const success = await opsP.editItem(editItem.id, { ...form, std_bags: currentStdBags, total_cost: currentTotalCost });
+      if (success) {
+        alert("✅ Purchase updated successfully!");
+        setShowForm(false);
+        setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", date: today() });
+        setEditItem(null);
+      }
     } else {
-      await opsP.addItem({ id: uid(), ...form, std_bags: stdBags, total_cost: totalCost });
+      const result = await opsP.addItem({ id: uid(), ...form, std_bags: currentStdBags, total_cost: currentTotalCost });
+      if (result) {
+        alert("✅ Purchase saved successfully!");
+        setShowForm(false);
+        setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", date: today() });
+        setEditItem(null);
+      }
     }
-    setShowForm(false);
-    setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", date: today() });
-    setEditItem(null);
   };
 
   return (
@@ -222,7 +315,7 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings }) =>
 };
 
 // DISPATCH
-const DispatchScreen = ({ dispatches, purchases, opsD, varieties, gradings }) => {
+const DispatchScreen = ({ dispatches, purchases, opsD, varieties }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", items: [], date: today() });
@@ -250,15 +343,24 @@ const DispatchScreen = ({ dispatches, purchases, opsD, varieties, gradings }) =>
   const totalLoadedCost = form.items.reduce((sum, i) => sum + (parseFloat(i.loaded_cost) || 0), 0);
 
   const save = async () => {
-    if (!form.gatepass_id || form.items.length === 0) return alert("Fill gatepass and add lots");
+    if (!form.gatepass_id || form.items.length === 0) return alert("❌ Fill gatepass ID and add at least one lot!");
     if (editItem) {
-      await opsD.editItem(editItem.id, form);
+      const success = await opsD.editItem(editItem.id, form);
+      if (success) {
+        alert("✅ Dispatch updated successfully!");
+        setShowForm(false);
+        setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", items: [], date: today() });
+        setEditItem(null);
+      }
     } else {
-      await opsD.addItem({ ...form, id: uid() });
+      const result = await opsD.addItem({ ...form, id: uid() });
+      if (result) {
+        alert("✅ Dispatch saved successfully!");
+        setShowForm(false);
+        setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", items: [], date: today() });
+        setEditItem(null);
+      }
     }
-    setShowForm(false);
-    setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", items: [], date: today() });
-    setEditItem(null);
   };
 
   return (
@@ -351,7 +453,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, varieties, gradings }) =>
 };
 
 // SALE
-const SaleScreen = ({ sales, dispatches, purchases, opsSales, varieties, gradings }) => {
+const SaleScreen = ({ sales, dispatches, purchases, opsSales }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [selectedGatepass, setSelectedGatepass] = useState("");
@@ -375,7 +477,7 @@ const SaleScreen = ({ sales, dispatches, purchases, opsSales, varieties, grading
         };
       }) || [];
       setSaleItems(items);
-      setForm({ ...form, gatepass_id: gpId, lot_sales: items });
+      setForm(prev => ({ ...prev, gatepass_id: gpId, lot_sales: items }));
     }
   };
 
@@ -383,7 +485,7 @@ const SaleScreen = ({ sales, dispatches, purchases, opsSales, varieties, grading
     const updated = [...saleItems];
     updated[idx] = { ...updated[idx], ...updates };
     setSaleItems(updated);
-    setForm({ ...form, lot_sales: updated });
+    setForm(prev => ({ ...prev, lot_sales: updated }));
   };
 
   const calculateExpenseSplit = () => {
@@ -413,18 +515,29 @@ const SaleScreen = ({ sales, dispatches, purchases, opsSales, varieties, grading
   const netProfit = totalSaleValue - totalPurchaseCost - totalExpenses;
 
   const save = async () => {
-    if (!form.gatepass_id || form.lot_sales.length === 0) return alert("Fill gatepass and add lots");
-    const data = { ...form, total_sale_value: totalSaleValue, total_expenses: totalExpenses, net_profit: netProfit };
+    if (!form.gatepass_id || form.lot_sales.length === 0) return alert("❌ Fill gatepass ID and select lots!");
+    const finalData = { ...form, total_sale_value: totalSaleValue, total_expenses: totalExpenses, net_profit: netProfit };
     if (editItem) {
-      await opsSales.editItem(editItem.id, data);
+      const success = await opsSales.editItem(editItem.id, finalData);
+      if (success) {
+        alert("✅ Sale updated successfully!");
+        setShowForm(false);
+        setSaleItems([]);
+        setSelectedGatepass("");
+        setForm({ gatepass_id: "", date: today(), lot_sales: [], transport: 0, commission_percent: 0, hamali_per_bag: 0, other_expenses: 0 });
+        setEditItem(null);
+      }
     } else {
-      await opsSales.addItem({ ...data, id: uid() });
+      const result = await opsSales.addItem({ ...finalData, id: uid() });
+      if (result) {
+        alert("✅ Sale saved successfully!");
+        setShowForm(false);
+        setSaleItems([]);
+        setSelectedGatepass("");
+        setForm({ gatepass_id: "", date: today(), lot_sales: [], transport: 0, commission_percent: 0, hamali_per_bag: 0, other_expenses: 0 });
+        setEditItem(null);
+      }
     }
-    setShowForm(false);
-    setSaleItems([]);
-    setSelectedGatepass("");
-    setForm({ gatepass_id: "", date: today(), lot_sales: [], transport: 0, commission_percent: 0, hamali_per_bag: 0, other_expenses: 0 });
-    setEditItem(null);
   };
 
   return (
@@ -435,9 +548,7 @@ const SaleScreen = ({ sales, dispatches, purchases, opsSales, varieties, grading
       </div>
 
       {sales.map(sx => {
-        const totalBags = sx.lot_sales?.reduce((sum, i) => sum + (parseFloat(i.loaded_bags) || 0), 0) || 0;
         const profit = sx.net_profit;
-        
         return (
           <div key={sx.id} style={{ ...s.card, background: (profit >= 0 ? clr.green : clr.red) + "08" }}>
             <div style={s.rowBetween}><Badge v={`GP: ${sx.gatepass_id}`} color={clr.green} /><span style={{ fontSize: 10, color: clr.muted }}>{fmtDate(sx.date)}</span></div>
@@ -446,7 +557,7 @@ const SaleScreen = ({ sales, dispatches, purchases, opsSales, varieties, grading
               <div><span style={s.label}>Profit</span><div style={{ fontWeight: 700, color: profit >= 0 ? clr.green : clr.red }}>₹{fmt(profit)}</div></div>
             </div>
             <div style={{ ...s.row }}>
-              <button onClick={() => { setEditItem(sx); setForm({ ...sx }); setSaleItems(sx.lot_sales || []); setShowForm(true); }} style={{ ...s.btnSm(), flex: 1 }}><Icon name="edit" size={10} color={clr.blue} /> Edit</button>
+              <button onClick={() => { setEditItem(sx); setForm({ ...sx }); setSaleItems(sx.lot_sales || []); setSelectedGatepass(sx.gatepass_id); setShowForm(true); }} style={{ ...s.btnSm(), flex: 1 }}><Icon name="edit" size={10} color={clr.blue} /> Edit</button>
               <button onClick={() => { if(window.confirm("Delete?")) opsSales.deleteItem(sx.id); }} style={{ ...s.btnSm(), flex: 1, color: clr.red }}><Icon name="trash" size={10} color={clr.red} /> Delete</button>
             </div>
           </div>
@@ -466,7 +577,7 @@ const SaleScreen = ({ sales, dispatches, purchases, opsSales, varieties, grading
                   <div style={{ fontWeight: 600, fontSize: 11, marginBottom: 6 }}>{item.lot_id}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 10, marginBottom: 6 }}>
                     <div><span style={s.label}>Loaded</span><div>{item.loaded_bags} bags | {item.loaded_weight}kg</div></div>
-                    <div><span style={s.label}>Received</span><input type="number" style={{ ...s.input, padding: "4px", fontSize: 11 }} value={item.received_weight} onChange={e => updateSaleItem(idx, { received_weight: e.target.value })} /></div>
+                    <div><span style={s.label}>Received Weight</span><input type="number" style={{ ...s.input, padding: "4px", fontSize: 11 }} value={item.received_weight} onChange={e => updateSaleItem(idx, { received_weight: e.target.value })} /></div>
                   </div>
                   {loss > 0 && <div style={{ ...s.card2, background: clr.card, padding: 6, marginBottom: 6, fontSize: 10 }}><div style={{ display: "flex", justifyContent: "space-between" }}><span>Loss: {loss.toFixed(2)}kg ({lossPercent}%)</span><span style={{ color: clr.orange }}>₹{fmt(loss * (parseFloat(item.sale_rate_per_kg) || 0))}</span></div></div>}
                   <div><span style={s.label}>Sale Rate (₹/kg)</span><input type="number" step="0.01" style={{ ...s.input, padding: "4px", fontSize: 11 }} value={item.sale_rate_per_kg} onChange={e => updateSaleItem(idx, { sale_rate_per_kg: e.target.value })} /></div>
@@ -477,10 +588,10 @@ const SaleScreen = ({ sales, dispatches, purchases, opsSales, varieties, grading
         )}
 
         <div style={{ ...s.label, marginBottom: 6 }}>Expenses</div>
-        <Field label="Transport (₹)"><input type="number" step="0.01" style={s.input} value={form.transport} onChange={e => setForm({ ...form, transport: e.target.value })} /></Field>
-        <Field label="Commission (%)"><input type="number" step="0.01" style={s.input} value={form.commission_percent} onChange={e => setForm({ ...form, commission_percent: e.target.value })} /></Field>
-        <Field label="Hamali per Bag (₹)"><input type="number" step="0.01" style={s.input} value={form.hamali_per_bag} onChange={e => setForm({ ...form, hamali_per_bag: e.target.value })} /></Field>
-        <Field label="Other Expenses (₹)"><input type="number" step="0.01" style={s.input} value={form.other_expenses} onChange={e => setForm({ ...form, other_expenses: e.target.value })} /></Field>
+        <Field label="Transport (₹)"><input type="number" step="0.01" style={s.input} value={form.transport} onChange={e => setForm(prev => ({ ...prev, transport: e.target.value }))} /></Field>
+        <Field label="Commission (%)"><input type="number" step="0.01" style={s.input} value={form.commission_percent} onChange={e => setForm(prev => ({ ...prev, commission_percent: e.target.value }))} /></Field>
+        <Field label="Hamali per Bag (₹)"><input type="number" step="0.01" style={s.input} value={form.hamali_per_bag} onChange={e => setForm(prev => ({ ...prev, hamali_per_bag: e.target.value }))} /></Field>
+        <Field label="Other Expenses (₹)"><input type="number" step="0.01" style={s.input} value={form.other_expenses} onChange={e => setForm(prev => ({ ...prev, other_expenses: e.target.value }))} /></Field>
 
         {form.lot_sales.length > 0 && (
           <div style={{ ...s.card, background: clr.green + "08", marginTop: 12, marginBottom: 12 }}>
@@ -615,63 +726,64 @@ const DueTrackingScreen = ({ sales, purchases, dispatches, coldStorages, parties
   );
 };
 
-// MASTER
-const MasterScreen = ({ varieties, gradings, coldStorages, mandis, parties, opsV, opsG, opsCS, opsM, opsPA }) => {
-  const renderSection = (title, items, fields, ops) => {
-    const [showForm, setShowForm] = useState(false);
-    const [editItem, setEditItem] = useState(null);
-    const [form, setForm] = useState({});
+// MASTER SUB-SECTION COMPONENT (To enforce React rule of hooks top-level declaration)
+const MasterSection = ({ title, items, fields, ops }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+  const [form, setForm] = useState({});
 
-    const save = async () => {
-      if (!form[fields[0].key]?.trim()) return alert("Fill required field");
-      if (editItem) {
-        await ops.editItem(editItem.id, form);
-      } else {
-        await ops.addItem({ id: uid(), ...form });
-      }
-      setShowForm(false);
-      setForm({});
-      setEditItem(null);
-    };
-
-    return (
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ ...s.rowBetween, marginBottom: 8 }}>
-          <span style={{ fontWeight: 600, fontSize: 13 }}>{title}</span>
-          <button onClick={() => { setEditItem(null); setForm({}); setShowForm(true); }} style={s.btnSm(clr.accent + "22", clr.accent)}>Add</button>
-        </div>
-        {items.length === 0 && <div style={{ color: clr.muted, fontSize: 12, textAlign: "center", padding: 6, marginBottom: 12 }}>No data</div>}
-        {items.map(item => (
-          <div key={item.id} style={{ ...s.card2, ...s.rowBetween, marginBottom: 6 }}>
-            <div><div style={{ fontWeight: 600, fontSize: 12 }}>{item[fields[0].key]}</div></div>
-            <div style={s.row}>
-              <button onClick={() => { setEditItem(item); setForm({ ...item }); setShowForm(true); }} style={{ ...s.btnSm(), padding: "4px 6px" }}><Icon name="edit" size={11} color={clr.blue} /></button>
-              <button onClick={() => { if (window.confirm("Delete?")) ops.deleteItem(item.id); }} style={{ ...s.btnSm(), padding: "4px 6px" }}><Icon name="trash" size={11} color={clr.red} /></button>
-            </div>
-          </div>
-        ))}
-        {showForm && (
-          <Modal open={true} onClose={() => setShowForm(false)} title={editItem ? "Edit" : "Add"}>
-            {fields.map(f => <Field key={f.key} label={f.label}><input style={s.input} value={form[f.key] || ""} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.label} /></Field>)}
-            <button onClick={save} style={{ ...s.btn(), width: "100%" }}>Save</button>
-          </Modal>
-        )}
-      </div>
-    );
+  const save = async () => {
+    if (!form[fields[0].key]?.trim()) return alert("Fill required field");
+    if (editItem) {
+      await ops.editItem(editItem.id, form);
+    } else {
+      await ops.addItem({ id: uid(), ...form });
+    }
+    setShowForm(false);
+    setForm({});
+    setEditItem(null);
   };
 
   return (
-    <div style={s.content}>
-      {renderSection("Varieties", varieties, [{ key: "name", label: "Variety Name" }], opsV)}
-      {renderSection("Gradings", gradings, [{ key: "name", label: "Grade Name" }], opsG)}
-      {renderSection("Cold Storages", coldStorages, [{ key: "name", label: "Name" }], opsCS)}
-      {renderSection("Mandis", mandis, [{ key: "name", label: "Name" }], opsM)}
-      {renderSection("Parties", parties, [{ key: "name", label: "Name" }, { key: "phone", label: "Phone" }], opsPA)}
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ ...s.rowBetween, marginBottom: 8 }}>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>{title}</span>
+        <button onClick={() => { setEditItem(null); setForm({}); setShowForm(true); }} style={s.btnSm(clr.accent + "22", clr.accent)}>Add</button>
+      </div>
+      {items.length === 0 && <div style={{ color: clr.muted, fontSize: 12, textAlign: "center", padding: 6, marginBottom: 12 }}>No data</div>}
+      {items.map(item => (
+        <div key={item.id} style={{ ...s.card2, ...s.rowBetween, marginBottom: 6 }}>
+          <div><div style={{ fontWeight: 600, fontSize: 12 }}>{item[fields[0].key]}</div></div>
+          <div style={s.row}>
+            <button onClick={() => { setEditItem(item); setForm({ ...item }); setShowForm(true); }} style={{ ...s.btnSm(), padding: "4px 6px" }}><Icon name="edit" size={11} color={clr.blue} /></button>
+            <button onClick={() => { if (window.confirm("Delete?")) ops.deleteItem(item.id); }} style={{ ...s.btnSm(), padding: "4px 6px" }}><Icon name="trash" size={11} color={clr.red} /></button>
+          </div>
+        </div>
+      ))}
+      {showForm && (
+        <Modal open={true} onClose={() => setShowForm(false)} title={editItem ? "Edit" : "Add"}>
+          {fields.map(f => <Field key={f.key} label={f.label}><input style={s.input} value={form[f.key] || ""} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.label} /></Field>)}
+          <button onClick={save} style={{ ...s.btn(), width: "100%" }}>Save</button>
+        </Modal>
+      )}
     </div>
   );
 };
 
-// APP
+// MASTER MAIN SCREEN
+const MasterScreen = ({ varieties, gradings, coldStorages, mandis, parties, opsV, opsG, opsCS, opsM, opsPA }) => {
+  return (
+    <div style={s.content}>
+      <MasterSection title="Varieties" items={varieties} fields={[{ key: "name", label: "Variety Name" }]} ops={opsV} />
+      <MasterSection title="Gradings" items={gradings} fields={[{ key: "name", label: "Grade Name" }]} ops={opsG} />
+      <MasterSection title="Cold Storages" items={coldStorages} fields={[{ key: "name", label: "Name" }]} ops={opsCS} />
+      <MasterSection title="Mandis" items={mandis} fields={[{ key: "name", label: "Name" }]} ops={opsM} />
+      <MasterSection title="Parties" items={parties} fields={[{ key: "name", label: "Name" }, { key: "phone", label: "Phone" }]} ops={opsPA} />
+    </div>
+  );
+};
+
+// MAIN APP
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const varieties = useSupabaseTable("varieties");
@@ -692,8 +804,8 @@ export default function App() {
 
       {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} sales={sales.data} />}
       {activeTab === "purchase" && <PurchaseScreen purchases={purchases.data} dispatches={dispatches.data} opsP={purchases} varieties={varieties.data} gradings={gradings.data} />}
-      {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} varieties={varieties.data} gradings={gradings.data} />}
-      {activeTab === "sale" && <SaleScreen sales={sales.data} dispatches={dispatches.data} purchases={purchases.data} opsSales={sales} varieties={varieties.data} gradings={gradings.data} />}
+      {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} varieties={varieties.data} />}
+      {activeTab === "sale" && <SaleScreen sales={sales.data} dispatches={dispatches.data} purchases={purchases.data} opsSales={sales} />}
       {activeTab === "pnl" && <PnLScreen sales={sales.data} purchases={purchases.data} dispatches={dispatches.data} />}
       {activeTab === "due" && <DueTrackingScreen sales={sales.data} purchases={purchases.data} dispatches={dispatches.data} coldStorages={coldStorages.data} parties={parties.data} />}
       {activeTab === "master" && <MasterScreen varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} mandis={mandis.data} parties={parties.data} opsV={varieties} opsG={gradings} opsCS={coldStorages} opsM={mandis} opsPA={parties} />}
