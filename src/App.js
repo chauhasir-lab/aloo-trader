@@ -115,6 +115,13 @@ const clr = {
   red: "#ef4444", blue: "#3b82f6", purple: "#a855f7", muted: "#6b7280", border: "#2d3148", text: "#f1f5f9", orange: "#f97316"
 };
 
+// FIX: Added Missing Badge Component to resolve the Blank Screen Crash
+const Badge = ({ v, color = clr.accent }) => (
+  <span style={{ background: color + "22", color: color, borderRadius: 4, padding: "3px 8px", fontSize: 11, fontWeight: 700, display: "inline-block" }}>
+    {v}
+  </span>
+);
+
 const getRemainingBags = (purchase, dispatches = []) => {
   const dispatchedBags = dispatches.flatMap(d => d.items || []).filter(i => i.lot_id === purchase.lot_id).reduce((sum, i) => sum + (parseFloat(i.loaded_bags) || 0), 0);
   return (parseFloat(purchase.manual_bags) || 0) - dispatchedBags;
@@ -197,7 +204,6 @@ const DashboardScreen = ({ purchases, dispatches, sales, parties, mandis }) => {
   const totalSaleValue = sales.reduce((sum, s) => sum + (parseFloat(s.total_sale_value) || 0), 0);
   const totalExpenses = sales.reduce((sum, s) => sum + (parseFloat(s.total_expenses) || 0), 0);
   
-  // Calculate specific transactional purchase cost of ONLY dispatched/sold stock to avoid false loss representation
   const activeDispatchedPurchaseCost = sales.reduce((sum, s) => {
     return sum + (s.lot_sales?.reduce((lotSum, ls) => {
       const origPurchase = purchases.find(p => p.lot_id === ls.lot_id);
@@ -242,9 +248,6 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() });
   
-  const stdBags = form.total_weight ? (parseFloat(form.total_weight) / 52.5).toFixed(2) : "0.00";
-  const totalCost = (parseFloat(form.manual_bags) || 0) * (parseFloat(form.rate_per_bag) || 0);
-
   const save = async () => {
     if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag) return alert("❌ Fill all required fields!");
     const currentStdBags = form.total_weight ? (parseFloat(form.total_weight) / 52.5).toFixed(2) : "0.00";
