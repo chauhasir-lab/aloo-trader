@@ -113,7 +113,7 @@ const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div st
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 14, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
 
 // ===== DASHBOARD =====
-const DashboardScreen = ({ purchases, dispatches, sales, payments, parties, mandis }) => {
+const DashboardScreen = ({ purchases, dispatches, payments, parties, mandis }) => {
   const activeLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0).length;
   const closedLots = purchases.filter(p => getRemainingBags(p, dispatches) <= 0).length;
 
@@ -166,7 +166,6 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
       return alert("❌ Fill all required fields!");
     }
     
-    // 52.5 kg rate deduction base logic
     const ratePerKg = parseFloat(form.rate_per_bag) / 52.5;
     const currentTotalCost = parseFloat(form.total_weight) * ratePerKg;
     const payload = { ...form, std_bags: (parseFloat(form.total_weight) / 52.5).toFixed(2), total_cost: currentTotalCost };
@@ -234,10 +233,10 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   );
 };
 
-// ===== DISPATCH LOGISTICS (MULTIPLE LOTS SYSTEM) =====
+// ===== DISPATCH LOGISTICS (FIXED VALUE FETCHING & IN-FORM CALCULATIONS) =====
 const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStorages }) => {
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0 });
+  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0 });
   const [itemForm, setItemForm] = useState({ lot_number: "", purchase_bags: "" });
 
   const availableLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0);
@@ -245,22 +244,41 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
   const addLotToTruck = () => {
     if (!itemForm.lot_number || !itemForm.purchase_bags) return alert("❌ Please fill Lot and Bags!");
     const matchedPurchase = purchases.find(p => p.lot_id === itemForm.lot_number);
+    if (!matchedPurchase) return alert("❌ Lot Selection Missing!");
+    
     const remaining = getRemainingBags(matchedPurchase, dispatches);
-    
-    if (parseFloat(itemForm.purchase_bags) > remaining) return alert(`Only ${remaining} bags available in this lot!`);
-    
-    const ratePerKg = parseFloat(matchedPurchase.rate_per_bag) / 52.5;
+    const bagsToLoad = parseInt(itemForm.purchase_bags);
 
-    // Database structure compatibility ke liye default variables update karna
+    if (bagsToLoad > remaining) return alert(`Only ${remaining} bags available in this lot!`);
+    
+    // Exact weight calculation according to standard 52.5 kg base rule
+    const computedWeightKg = bagsToLoad * 52.5;
+    const originalRatePerBag = parseFloat(matchedPurchase.rate_per_bag) || 0;
+    const ratePerKg = originalRatePerBag / 52.5;
+    
+    // Multi lot live value tracking formula calculation loop block
+    const calculatedLotValue = bagsToLoad * originalRatePerBag;
+
     const newLot = {
       lot_number: itemForm.lot_number,
-      purchase_bags: parseInt(itemForm.purchase_bags),
+      purchase_bags: bagsToLoad,
+      purchase_weight_kg: computedWeightKg,
       purchase_rate_per_kg: ratePerKg,
-      mandi_arrived_weight_kg: 0, // Mandi sale screen me updates hoga
+      purchase_lot_value: calculatedLotValue, // Live Display field inside array payload
+      mandi_arrived_weight_kg: 0,
       mandi_sale_rate_per_kg: 0
     };
 
-    setForm(p => ({ ...p, lot_details: [...p.lot_details, newLot] }));
+    setForm(p => {
+      const updatedDetails = [...p.lot_details, newLot];
+      const aggregatedPurchaseCost = updatedDetails.reduce((s, item) => s + item.purchase_lot_value, 0);
+      return { 
+        ...p, 
+        lot_details: updatedDetails,
+        total_purchase_amount: aggregatedPurchaseCost
+      };
+    });
+    
     setItemForm({ lot_number: "", purchase_bags: "" });
   };
 
@@ -276,7 +294,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 14 }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>Dispatches (Truck Dispatch)</span>
-        <button onClick={() => { setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0 }); setShowForm(true); }} style={s.btn()}><Icon name="add" size={14} /> New Truck</button>
+        <button onClick={() => { setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0 }); setShowForm(true); }} style={s.btn()}><Icon name="add" size={14} /> New Truck</button>
       </div>
 
       {dispatches.map(d => (
@@ -286,7 +304,8 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
             To: <strong>{parties.find(p => p.id === d.destination_party_id)?.name || "N/A"}</strong> | Mandi: {mandis.find(m => m.id === d.mandi_id)?.name || "N/A"}
           </div>
           <div style={{ marginTop: 6, fontSize: 13, background: "#0002", padding: 6, borderRadius: 6 }}>
-            <strong>Loaded Lots:</strong> {d.lot_details?.map(l => `${l.lot_number} (${l.purchase_bags} Bags)`).join(", ")}
+            <strong>Loaded Value:</strong> ₹{fmt(d.total_purchase_amount)}<br/>
+            <strong>Lots:</strong> {d.lot_details?.map(l => `${l.lot_number} (${l.purchase_bags} Bags - ₹${fmt(l.purchase_lot_value)})`).join(", ")}
           </div>
           <div style={{ ...s.row, marginTop: 10 }}>
             <button onClick={() => { if(window.confirm("Delete?")) opsD.deleteItem(d.id); }} style={{ ...s.btnSm(), width: "100%", color: clr.red }}><Icon name="trash" size={12} color={clr.red} /> Remove</button>
@@ -304,13 +323,19 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
           <div style={s.label}>🚚 Load Multiple Lots into Truck</div>
           <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_number} onChange={e => setItemForm({ ...itemForm, lot_number: e.target.value })}><option value="">Select Available Lot</option>{availableLots.map(l => <option key={l.id} value={l.lot_id}>{l.lot_id}</option>)}</select>
           <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Bags Count to Load" value={itemForm.purchase_bags} onChange={e => setItemForm({ ...itemForm, purchase_bags: e.target.value })} />
-          <button onClick={addLotToTruck} style={{ ...s.btnSm(clr.accent, "#000"), width: "100%" }}>+ Add Lot Into Current Dispatch</button>
+          <button onClick={addLotToTruck} style={{ ...s.btnSm(clr.accent, "#000"), width: "100%" }}>+ Fetch Value & Add Lot</button>
         </div>
 
         {form.lot_details.length > 0 && (
-          <div style={{ marginBottom: 10, fontSize: 13 }}>
+          <div style={{ marginBottom: 10, fontSize: 13, background: clr.card2, padding: 10, borderRadius: 8 }}>
             <strong>Selected Lots Queue:</strong>
-            {form.lot_details.map((l, i) => <div key={i} style={{ color: clr.green }}>• Lot {l.lot_number} — {l.purchase_bags} Bags</div>)}
+            {form.lot_details.map((l, i) => (
+              <div key={i} style={{ color: clr.green, marginTop: 4 }}>
+                • Lot {l.lot_number} — {l.purchase_bags} Bags ({l.purchase_weight_kg} kg) ➔ <strong style={{color: clr.accent}}>₹{fmt(l.purchase_lot_value)}</strong>
+              </div>
+            ))}
+            <div style={{ ...s.divider, margin: "6px 0" }} />
+            <div>Total Truck Purchase Cost: <strong>₹{fmt(form.total_purchase_amount)}</strong></div>
           </div>
         )}
 
@@ -320,7 +345,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
   );
 };
 
-// ===== MANDI SALE SCREEN (AUTOMATIC FETCH & EQUAL EXPENSES SPLIT) =====
+// ===== MANDI SALE SCREEN =====
 const SaleScreen = ({ sales, dispatches, opsD }) => {
   const [showForm, setShowForm] = useState(false);
   const [selectedDispatchId, setSelectedDispatchId] = useState("");
@@ -348,7 +373,6 @@ const SaleScreen = ({ sales, dispatches, opsD }) => {
   const saveMandiInvoice = async () => {
     if (!form.gatepass_id || form.lot_details.length === 0) return alert("❌ Setup transaction completely!");
     
-    // Total combined calculations
     const transportCost = parseFloat(form.transport) || 0;
     const commissionPct = parseFloat(form.commission_percent) || 0;
     const hamaliRate = parseFloat(form.hamali_per_bag) || 0;
@@ -360,14 +384,12 @@ const SaleScreen = ({ sales, dispatches, opsD }) => {
 
     const consolidatedExpenses = transportCost + totalCommission + totalHamali + otherCost;
 
-    // Supabase trigger triggers execution inside DB directly
     const finalPayload = {
       ...form,
       total_expenses: consolidatedExpenses,
       lot_details: form.lot_details 
     };
 
-    // Update dispatch record with sales values to trigger automated matrix calculations
     const success = await opsD.editItem(form.id, finalPayload);
     if (success) { setShowForm(false); setSelectedDispatchId(""); }
   };
@@ -481,7 +503,7 @@ const ColdStorageDueScreen = ({ purchases, coldStorages }) => {
   );
 };
 
-// ===== DETAILED PROFIT REALIZATION REPORT (SHOW AUTO CALCS) =====
+// ===== DETAILED PROFIT REALIZATION REPORT =====
 const PnLScreen = ({ dispatches, parties, mandis }) => {
   return (
     <div style={s.content}>
@@ -499,7 +521,6 @@ const PnLScreen = ({ dispatches, parties, mandis }) => {
             <div style={{ fontSize: 13, color: clr.muted, marginTop: 4 }}>Party Reference: <strong>{partyName}</strong></div>
             <div style={s.divider} />
 
-            {/* Loop through auto metrics calculated by database function trigger */}
             {sale.lot_details?.map((ls, idx) => {
               const netLotProfit = parseFloat(ls.lot_net_profit_loss) || 0;
               return (
@@ -590,7 +611,7 @@ export default function App() {
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
-      {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} sales={[]} payments={payments.data} parties={parties.data} mandis={mandis.data} />}
+      {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} payments={payments.data} parties={parties.data} mandis={mandis.data} />}
       {activeTab === "purchase" && <PurchaseScreen purchases={purchases.data} dispatches={dispatches.data} opsP={purchases} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
       {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} coldStorages={coldStorages.data} />}
       {activeTab === "sale" && <SaleScreen sales={[]} dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} />}
