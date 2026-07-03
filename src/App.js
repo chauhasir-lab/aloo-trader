@@ -5,79 +5,61 @@ const SUPABASE_URL = "https://cxjmwjljjnuthcrmnbqb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN4am13amxqam51dGhjcm1uYnFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwOTYzMzUsImV4cCI6MjA5MjY3MjMzNX0.ynRaceAT1uWcsPOJ_5vY_8NKolM3EaWKQajUEk4sLz8";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ==========================================
-// CUSTOM HOOK WITH EDIT & DELETE
-// ==========================================
 const useSupabaseTable = (tableName) => {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const { data: rows, error: err } = await supabase.from(tableName).select("*").order("created_at", { ascending: false });
-      if (err) { setError(err.message); return; }
-      if (rows) {
-        const processedRows = rows.map(row => {
-          if (row.items && typeof row.items === "string") {
-            try { row.items = JSON.parse(row.items); } catch(e) { console.error(e); }
-          }
-          if (row.lot_sales && typeof row.lot_sales === "string") {
-            try { row.lot_sales = JSON.parse(row.lot_sales); } catch(e) { console.error(e); }
-          }
-          return row;
-        });
-        setData(processedRows);
-      }
-    } catch (e) { setError(e.message); } finally { setLoading(false); }
-  };
-
-  useEffect(() => { fetchData(); }, [tableName]);
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const { data: rows, error: err } = await supabase.from(tableName).select("*").order("created_at", { ascending: false });
+        if (err) { console.error(`❌ FETCH (${tableName}):`, err); return; }
+        if (rows) setData(rows);
+      } catch (e) { console.error(e); }
+      finally { setLoading(false); }
+    };
+    fetchData();
+  }, [tableName]);
 
   const addItem = async (item) => {
     try {
-      const payload = { ...item, created_at: new Date().toISOString() };
-      if (payload.items && typeof payload.items !== "string") payload.items = JSON.stringify(payload.items);
-      if (payload.lot_sales && typeof payload.lot_sales !== "string") payload.lot_sales = JSON.stringify(payload.lot_sales);
-
-      const { data: d, error: err } = await supabase.from(tableName).insert([payload]).select();
-      if (err) { alert(`Error saving: ${err.message}`); return null; }
-      fetchData();
-      return d[0];
-    } catch (e) { alert(`Error: ${e.message}`); return null; }
+      const { data: d, error: err } = await supabase.from(tableName).insert([{ ...item, created_at: new Date().toISOString() }]).select();
+      if (err) { alert(`❌ Error: ${err.message}`); return null; }
+      if (d && d.length > 0) {
+        setData([d[0], ...data]);
+        alert("✅ Saved!");
+        return d[0];
+      }
+    } catch (e) { alert(`Error: ${e.message}`); }
   };
 
-  const updateItem = async (id, updatedFields) => {
+  const editItem = async (id, updates) => {
     try {
-      const payload = { ...updatedFields };
-      if (payload.items && typeof payload.items !== "string") payload.items = JSON.stringify(payload.items);
-      if (payload.lot_sales && typeof payload.lot_sales !== "string") payload.lot_sales = JSON.stringify(payload.lot_sales);
-
-      const { error: err } = await supabase.from(tableName).update(payload).eq("id", id);
-      if (err) { alert(`Error updating: ${err.message}`); return false; }
-      fetchData();
+      const { error: err } = await supabase.from(tableName).update(updates).eq("id", id);
+      if (err) { alert(`Error: ${err.message}`); return false; }
+      setData(data.map(x => x.id === id ? { ...x, ...updates } : x));
+      alert("✅ Updated!");
       return true;
-    } catch (e) { alert(`Error: ${e.message}`); return false; }
+    } catch (e) { alert(`Error: ${e.message}`); }
   };
 
   const deleteItem = async (id) => {
-    if (!window.confirm("Kya aap sach me is entry ko delete karna chahte hain?")) return false;
     try {
       const { error: err } = await supabase.from(tableName).delete().eq("id", id);
-      if (err) { alert(`Error deleting: ${err.message}`); return false; }
-      fetchData();
+      if (err) { alert(`Error: ${err.message}`); return false; }
+      setData(data.filter(x => x.id !== id));
       return true;
-    } catch (e) { alert(`Error: ${e.message}`); return false; }
+    } catch (e) { alert(`Error: ${e.message}`); }
   };
 
-  return { data, loading, error, addItem, updateItem, deleteItem, refresh: fetchData };
+  return { data, loading, error, addItem, editItem, deleteItem };
 };
 
-// UTILITIES
 const uid = () => Math.random().toString(36).slice(2, 9).toUpperCase();
-const fmt = (n, d = 0) => (isNaN(n) || n === null || n === undefined ? "0" : Number(n).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d }));
+const fmt = (n, d = 0) => (isNaN(n) ? "0" : Number(n).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d }));
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN") : "-";
 const today = () => new Date().toISOString().slice(0, 10);
 
 const clr = { 
@@ -86,39 +68,13 @@ const clr = {
 };
 
 const Badge = ({ v, color = clr.accent }) => (
-  <span style={{ background: color + "22", color: color, borderRadius: 4, padding: "3px 8px", fontSize: 11, fontWeight: 700, display: "inline-block" }}>
+  <span style={{ background: color + "22", color, borderRadius: 4, padding: "3px 8px", fontSize: 11, fontWeight: 700, display: "inline-block" }}>
     {v}
   </span>
 );
 
-const Field = ({ label, children }) => (
-  <div style={{ marginBottom: 10 }}>
-    <div style={{ fontSize: 10, color: clr.muted, fontWeight: 700, textTransform: "uppercase", marginBottom: 2 }}>{label}</div>
-    {children}
-  </div>
-);
-
-const Modal = ({ open, onClose, title, children }) => {
-  if (!open) return null;
-  return (
-    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
-      <div style={{ background: clr.card, border: `1px solid ${clr.border}`, borderRadius: 12, width: "100%", maxWidth: 420, padding: 16, boxSizing: "border-box", maxHeight: "90vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <strong style={{ fontSize: 15, color: clr.accent }}>{title}</strong>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: clr.red, fontSize: 18, cursor: "pointer" }}>✕</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-};
-
-// GLOBAL REMAINING BAGS FINDER
 const getRemainingBags = (purchase, dispatches = []) => {
-  const dispatchedBags = dispatches
-    .flatMap(d => d.items || [])
-    .filter(i => i.lot_id === purchase.lot_id)
-    .reduce((sum, i) => sum + (parseFloat(i.loaded_bags) || 0), 0);
+  const dispatchedBags = dispatches.flatMap(d => d.items || []).filter(i => i.lot_id === purchase.lot_id).reduce((sum, i) => sum + (parseFloat(i.loaded_bags) || 0), 0);
   return (parseFloat(purchase.manual_bags) || 0) - dispatchedBags;
 };
 
@@ -131,607 +87,638 @@ const s = {
   row: { display: "flex", alignItems: "center", gap: 6 },
   input: { width: "100%", background: clr.card2, border: `1px solid ${clr.border}`, borderRadius: 6, padding: "8px 10px", color: clr.text, fontSize: 13, boxSizing: "border-box", outline: "none" },
   select: { width: "100%", background: clr.card2, border: `1px solid ${clr.border}`, borderRadius: 6, padding: "8px 10px", color: clr.text, fontSize: 13, boxSizing: "border-box", outline: "none" },
-  btn: (bg = clr.accent, txt = "#000") => ({ width: "100%", background: bg, color: txt, border: "none", borderRadius: 6, padding: "10px", fontWeight: 700, fontSize: 13, cursor: "pointer" }),
-  btnSm: (bg = clr.card2, txt = clr.text) => ({ background: bg, color: txt, border: `1px solid ${clr.border}`, borderRadius: 5, padding: "5px 10px", fontWeight: 600, fontSize: 11, cursor: "pointer" }),
+  label: { fontSize: 10, color: clr.muted, marginBottom: 2, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 },
+  btn: (bg = clr.accent, txt = "#000") => ({ background: bg, color: txt, border: "none", borderRadius: 6, padding: "9px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, justifyContent: "center", width: "100%" }),
+  btnSm: (bg = clr.card2, txt = clr.text) => ({ background: bg, color: txt, border: `1px solid ${clr.border}`, borderRadius: 5, padding: "5px 8px", fontWeight: 600, fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }),
+  tag: (bg = clr.accent + "22", txt = clr.accent) => ({ background: bg, color: txt, borderRadius: 4, padding: "2px 6px", fontSize: 10, fontWeight: 700 }),
   content: { padding: 12, paddingBottom: 80 },
   navBar: { position: "fixed", bottom: 0, left: 0, right: 0, maxWidth: 480, margin: "0 auto", background: clr.card, borderTop: `1px solid ${clr.border}`, display: "flex", zIndex: 200 },
-  navItem: (active) => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "12px 4px", gap: 2, background: "none", border: "none", color: active ? clr.accent : clr.muted, fontSize: 16, cursor: "pointer" }),
+  navItem: (active) => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 4px", gap: 2, background: "none", border: "none", color: active ? clr.accent : clr.muted, fontSize: 9, cursor: "pointer" }),
   divider: { height: 1, background: clr.border, margin: "6px 0" }
 };
 
-// ==========================================
-// WHATSAPP POPUP COMPONENT
-// ==========================================
-const WhatsappPopup = ({ msg, onClose }) => {
-  if (!msg) return null;
-  const copyText = () => {
-    navigator.clipboard.writeText(msg);
-    alert("Message Copy ho gaya hai! Ab aap WhatsApp par share kar sakte hain.");
+const Icon = ({ name, size = 16, color = clr.text }) => {
+  const icons = {
+    dashboard: "M3 3h2v2H3V3zm4 0h2v2H7V3zm4 0h2v2h-2V3zm4 0h2v2h-2V3zM3 7h2v2H3V7zm4 0h2v2H7V7zm4 0h2v2h-2V7zm4 0h2v2h-2V7zM3 11h2v2H3v-2zm4 0h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2z",
+    purchase: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z",
+    dispatch: "M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0",
+    sale: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+    add: "M12 4v16m8-8H4", x: "M6 18L18 6M6 6l12 12", trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
+    edit: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
+    search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z",
+    download: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
   };
-  return (
-    <Modal open={!!msg} onClose={onClose} title="🚀 Dispatch WhatsApp Summary">
-      <pre style={{ background: clr.bg, padding: 10, borderRadius: 6, color: "#fff", fontSize: 11, whiteSpace: "pre-wrap", fontFamily: "monospace" }}>{msg}</pre>
-      <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-        <button onClick={copyText} style={s.btn(clr.green, "#fff")}>📋 Copy Message</button>
-        <button onClick={onClose} style={s.btn(clr.card2, clr.text)}>Close</button>
-      </div>
-    </Modal>
-  );
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icons[name]} /></svg>;
 };
 
-// ==========================================
-// 1. DASHBOARD SCREEN
-// ==========================================
-const DashboardScreen = ({ purchases, dispatches, sales, payments }) => {
+const Field = ({ label, children }) => <div style={{ marginBottom: 10 }}><div style={s.label}>{label}</div>{children}</div>;
+const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "16px 16px 0 0", width: "100%", maxWidth: 480, maxHeight: "90vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 12, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 14 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={12} /></button></div><div style={{ overflowY: "auto", padding: "0 12px 16px" }}>{children}</div></div></div>;
+
+const downloadDataFile = (searchKey, dispatches, sales, purchases, parties, mandis) => {
+  const matchedDispatch = dispatches.find(d => d.gatepass_id?.toLowerCase() === searchKey.toLowerCase() || d.items?.some(i => i.lot_id?.toLowerCase() === searchKey.toLowerCase()));
+  if (!matchedDispatch) return alert("No reports found!");
+
+  const targetParty = parties.find(p => p.id === matchedDispatch.destination_party_id)?.name || "Unknown";
+  const targetMandi = mandis.find(m => m.id === matchedDispatch.mandi_id)?.name || "Unknown";
+  const matchingSale = sales.find(s => s.gatepass_id === matchedDispatch.gatepass_id);
+
+  let csvContent = `Transaction Report: ${searchKey}\nGatepass,Vehicle,Party,Mandi,Date\n${matchedDispatch.gatepass_id},${matchedDispatch.vehicle_number},${targetParty},${targetMandi},${matchedDispatch.date}\n\nLot ID,Bags,Weight,Sale Weight,Rate,Sale Value,Status\n`;
+
+  matchedDispatch.items?.forEach(i => {
+    const saleDetails = matchingSale?.lot_sales?.find(ls => ls.lot_id === i.lot_id);
+    const rate = saleDetails?.sale_rate_per_kg || 0;
+    const recvWt = saleDetails?.received_weight || i.loaded_weight;
+    const val = recvWt * rate;
+    csvContent += `${i.lot_id},${i.loaded_bags},${i.loaded_weight},${recvWt},${rate},${val},${matchingSale ? "Sold" : "Dispatched"}\n`;
+  });
+
+  const blob = new Blob([csvContent], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `Report_${searchKey}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
+// ===== DASHBOARD (ENHANCED) =====
+const DashboardScreen = ({ purchases, dispatches, sales, payments, parties, mandis, coldStorages }) => {
+  const [searchKey, setSearchKey] = useState("");
+  
+  // ✅ CLOSED LOTS
   const activeLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0).length;
   const closedLots = purchases.filter(p => getRemainingBags(p, dispatches) <= 0).length;
-  
-  const totalBagsPurchased = purchases.reduce((sum, p) => sum + (parseFloat(p.manual_bags) || 0), 0);
-  const totalDispatchedBags = dispatches.flatMap(d => d.items || []).reduce((sum, i) => sum + (parseFloat(i.loaded_bags) || 0), 0);
-  const remainingBags = totalBagsPurchased - totalDispatchedBags;
 
-  const totalSales = sales.reduce((sum, s) => {
-    const subTot = (s.lot_sales || []).reduce((sm, l) => sm + ((parseFloat(l.received_weight) || 0) * (parseFloat(l.rate_per_kg) || 0)), 0);
-    return sum + subTot;
+  // ✅ SALES & PAYMENTS TRACKING
+  const totalSaleValue = sales.reduce((sum, s) => sum + (parseFloat(s.total_sale_value) || 0), 0);
+  const totalExpenses = sales.reduce((sum, s) => sum + (parseFloat(s.total_expenses) || 0), 0);
+  const totalPaymentsReceived = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+  const pendingDue = totalSaleValue - totalPaymentsReceived;
+
+  const activeDispatchedPurchaseCost = sales.reduce((sum, s) => {
+    return sum + (s.lot_sales?.reduce((lotSum, ls) => {
+      const origPurchase = purchases.find(p => p.lot_id === ls.lot_id);
+      return lotSum + ((parseFloat(ls.loaded_bags) || 0) * (parseFloat(origPurchase?.rate_per_bag) || 0));
+    }, 0) || 0);
   }, 0);
 
-  const totalPaymentsReceived = payments.filter(p => p.type === "PARTY_RECEIPT").reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-  const pending = totalSales - totalPaymentsReceived;
+  const realizedProfit = totalSaleValue - activeDispatchedPurchaseCost - totalExpenses;
 
   return (
     <div style={s.content}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
-        <div style={{ ...s.card2, background: clr.blue + "15" }}>
-          <div style={{ fontSize: 10, color: clr.muted, fontWeight: 700 }}>ACTIVE LOTS</div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: clr.blue }}>{activeLots}</div>
-        </div>
-        <div style={{ ...s.card2, background: clr.red + "15" }}>
-          <div style={{ fontSize: 10, color: clr.muted, fontWeight: 700 }}>CLOSED LOTS</div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: clr.red }}>{closedLots}</div>
-        </div>
-        <div style={{ ...s.card2, background: clr.green + "15" }}>
-          <div style={{ fontSize: 10, color: clr.muted, fontWeight: 700 }}>DISPATCHED</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: clr.green }}>{totalDispatchedBags} bags</div>
-        </div>
-        <div style={{ ...s.card2, background: clr.orange + "15" }}>
-          <div style={{ fontSize: 10, color: clr.muted, fontWeight: 700 }}>STOCK REMAINING</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: clr.orange }}>{remainingBags} bags</div>
+      <div style={{ ...s.card, background: clr.card2 }}>
+        <div style={s.label}>Download Reports</div>
+        <div style={{ ...s.row, marginTop: 6 }}>
+          <input style={{ ...s.input, flex: 1 }} placeholder="Enter Gatepass or Lot ID" value={searchKey} onChange={e => setSearchKey(e.target.value)} />
+          <button onClick={() => downloadDataFile(searchKey, dispatches, sales, purchases, parties, mandis)} style={s.btn(clr.blue, "#fff")}><Icon name="download" size={12} /></button>
         </div>
       </div>
 
-      <div style={s.card}>
-        <div style={{ fontSize: 10, color: clr.muted, fontWeight: 700, marginBottom: 8 }}>PARTY OUTSTANDINGS</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+        <div style={{ ...s.card2, background: clr.blue + "15" }}><div style={s.label}>Active Lots</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.blue }}>{activeLots}</div></div>
+        <div style={{ ...s.card2, background: clr.red + "15" }}><div style={s.label}>Closed Lots</div><div style={{ fontSize: 18, fontWeight: 800, color: clr.red }}>{closedLots}</div></div>
+      </div>
+
+      <div style={{ ...s.card, background: clr.green + "15" }}>
+        <div style={s.label}>✅ Sales & Payments Tracking</div>
         <div style={s.divider} />
         <div style={{ fontSize: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-            <span>Total Sales Value:</span>
-            <strong style={{ color: clr.green }}>₹{fmt(totalSales)}</strong>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-            <span>Received from Parties:</span>
-            <strong>₹{fmt(totalPaymentsReceived)}</strong>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span>Net Pending Due:</span>
-            <strong style={{ color: clr.orange }}>₹{fmt(pending)}</strong>
-          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}><span>Total Sales Value:</span><strong style={{ color: clr.green }}>₹{fmt(totalSaleValue)}</strong></div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}><span>Payments Received:</span><strong>₹{fmt(totalPaymentsReceived)}</strong></div>
+          <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${clr.border}`, paddingTop: 4 }}><span style={{ fontWeight: 600 }}>Pending Due:</span><strong style={{ color: clr.orange }}>₹{fmt(pendingDue)}</strong></div>
         </div>
       </div>
-    </div>
-  );
-};
 
-// ==========================================
-// 2. PURCHASE SCREEN (WITH EDIT & DELETE)
-// ==========================================
-const PurchaseScreen = ({ purchases, dispatches, opsP, coldStorages, gradings, varieties }) => {
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", cold_storage_id: "", grading: "", variety: "", date: today() });
-
-  const openEdit = (p) => {
-    setEditingId(p.id);
-    setForm({ ...p });
-    setShowForm(true);
-  };
-
-  const save = async () => {
-    if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag) return alert("Fill all fields!");
-    const stdBags = form.total_weight ? (parseFloat(form.total_weight) / 52.5).toFixed(2) : "0";
-    const totalCost = (parseFloat(form.manual_bags) || 0) * (parseFloat(form.rate_per_bag) || 0);
-    
-    const dataPayload = { ...form, std_bags: stdBags, total_cost: totalCost };
-
-    if (editingId) {
-      await opsP.updateItem(editingId, dataPayload);
-    } else {
-      await opsP.addItem({ id: uid(), ...dataPayload });
-    }
-    
-    setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", cold_storage_id: "", grading: "", variety: "", date: today() });
-    setEditingId(null);
-    setShowForm(false);
-  };
-
-  return (
-    <div style={s.content}>
-      <div style={s.rowBetween}>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>Purchases</div>
-        <button onClick={() => { setEditingId(null); setShowForm(true); }} style={{ ...s.btnSm(clr.accent, "#000") }}>+ New</button>
+      <div style={{ ...s.card, background: (realizedProfit >= 0 ? clr.green : clr.red) + "15" }}>
+        <div style={s.label}>Realized Operational P&L</div>
+        <div style={s.divider} />
+        <div style={{ fontSize: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}><span>Dispatched Stock Cost:</span><strong>₹{fmt(activeDispatchedPurchaseCost)}</strong></div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}><span>Gross Sales Value:</span><strong style={{ color: clr.green }}>₹{fmt(totalSaleValue)}</strong></div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}><span>Total Expenses:</span><strong style={{ color: clr.orange }}>₹{fmt(totalExpenses)}</strong></div>
+          <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${clr.border}`, paddingTop: 4 }}><span style={{ fontWeight: 600 }}>Net Profit:</span><strong style={{ color: realizedProfit >= 0 ? clr.green : clr.red, fontSize: 14 }}>₹{fmt(realizedProfit)}</strong></div>
+        </div>
       </div>
 
-      {purchases.map(p => {
+      <div style={{ fontSize: 10, fontWeight: 700, color: clr.muted, marginTop: 12, marginBottom: 6 }}>✅ RECENT ACTIVITY (Last 3)</div>
+      
+      <div style={{ fontSize: 10, fontWeight: 600, color: clr.muted, marginBottom: 4 }}>Purchases</div>
+      {purchases.slice(0, 3).map(p => {
         const rem = getRemainingBags(p, dispatches);
-        const closed = rem <= 0;
         return (
-          <div key={p.id} style={{ ...s.card, borderLeft: `3px solid ${closed ? clr.red : clr.green}` }}>
+          <div key={p.id} style={{ ...s.card2, fontSize: 11, marginBottom: 4 }}>
             <div style={s.rowBetween}>
-              <Badge v={p.lot_id} color={closed ? clr.red : clr.accent} />
-              <div style={s.row}>
-                <button onClick={() => openEdit(p)} style={s.btnSm(clr.card2, clr.text)}>Edit</button>
-                <button onClick={() => opsP.deleteItem(p.id)} style={s.btnSm(clr.red + "22", clr.red)}>Del</button>
-              </div>
-            </div>
-            <div style={{ fontWeight: 600, fontSize: 13, marginTop: 4 }}>{p.farmer_name} <span style={{fontSize:10, color:clr.muted}}>({p.variety} | {p.grading})</span></div>
-            <div style={s.divider} />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 11 }}>
-              <div><span style={{ fontSize: 10, color: clr.muted }}>BAGS</span><div style={{ fontWeight: 700 }}>{p.manual_bags}</div></div>
-              <div><span style={{ fontSize: 10, color: clr.muted }}>RATE</span><div style={{ fontWeight: 700 }}>₹{p.rate_per_bag}</div></div>
-              <div><span style={{ fontSize: 10, color: clr.muted }}>COST</span><div style={{ fontWeight: 700, color: clr.accent }}>₹{fmt(p.total_cost)}</div></div>
-              <div><span style={{ fontSize: 10, color: clr.muted }}>STOCK</span><div style={{ fontWeight: 700, color: closed ? clr.red : clr.green }}>{rem}</div></div>
+              <span>{p.lot_id} • {p.farmer_name}</span>
+              <Badge v={rem <= 0 ? "CLOSED" : `${rem} bags`} color={rem <= 0 ? clr.red : clr.green} />
             </div>
           </div>
         );
       })}
 
-      <Modal open={showForm} onClose={() => setShowForm(false)} title={editingId ? "Edit Purchase" : "Add Purchase"}>
-        <Field label="Lot ID"><input style={s.input} value={form.lot_id} onChange={e => setForm({ ...form, lot_id: e.target.value })} placeholder="LOT001" /></Field>
+      <div style={{ fontSize: 10, fontWeight: 600, color: clr.muted, marginBottom: 4, marginTop: 8 }}>Dispatches</div>
+      {dispatches.slice(0, 3).map(d => (
+        <div key={d.id} style={{ ...s.card2, fontSize: 11, marginBottom: 4 }}>
+          <div style={s.rowBetween}>
+            <span>GP: {d.gatepass_id} • {d.vehicle_number}</span>
+            <span style={{ color: clr.blue }}>Sent</span>
+          </div>
+        </div>
+      ))}
+
+      <div style={{ fontSize: 10, fontWeight: 600, color: clr.muted, marginBottom: 4, marginTop: 8 }}>Sales</div>
+      {sales.slice(0, 3).map(sl => (
+        <div key={sl.id} style={{ ...s.card2, fontSize: 11, marginBottom: 4 }}>
+          <div style={s.rowBetween}>
+            <span>GP: {sl.gatepass_id}</span>
+            <span style={{ color: clr.green }}>₹{fmt(sl.total_sale_value)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ===== PURCHASE (SAME) =====
+const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, coldStorages }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+  const [form, setForm] = useState({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() });
+  
+  const save = async () => {
+    if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag) return alert("❌ Fill all required fields!");
+    const currentStdBags = form.total_weight ? (parseFloat(form.total_weight) / 52.5).toFixed(2) : "0.00";
+    const currentTotalCost = (parseFloat(form.manual_bags) || 0) * (parseFloat(form.rate_per_bag) || 0);
+    
+    if (editItem) {
+      const success = await opsP.editItem(editItem.id, { ...form, std_bags: currentStdBags, total_cost: currentTotalCost });
+      if (success) { setShowForm(false); setEditItem(null); setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() }); }
+    } else {
+      const result = await opsP.addItem({ id: uid(), ...form, std_bags: currentStdBags, total_cost: currentTotalCost });
+      if (result) { setShowForm(false); setEditItem(null); setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() }); }
+    }
+  };
+
+  return (
+    <div style={s.content}>
+      <div style={{ ...s.rowBetween, marginBottom: 12 }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>Purchases</span>
+        <button onClick={() => { setEditItem(null); setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() }); setShowForm(true); }} style={s.btn()}><Icon name="add" size={12} /> New</button>
+      </div>
+
+      {purchases.map(p => {
+        const remaining = getRemainingBags(p, dispatches);
+        const isClosed = remaining <= 0;
+        return (
+          <div key={p.id} style={{ ...s.card, borderLeft: `3px solid ${isClosed ? clr.red : clr.green}`, opacity: isClosed ? 0.6 : 1 }}>
+            <div style={s.rowBetween}>
+              <Badge v={p.lot_id} color={isClosed ? clr.red : clr.accent} />
+              {isClosed && <span style={{ fontSize: 10, color: clr.red, fontWeight: "bold" }}>✓ CLOSED</span>}
+            </div>
+            <div style={{ fontWeight: 600, fontSize: 12, marginTop: 4 }}>{p.farmer_name}</div>
+            <div style={{ fontSize: 11, color: clr.muted, marginTop: 4 }}>Storage: {coldStorages.find(c => c.id === p.cold_storage_id)?.name || "Direct"}</div>
+            <div style={s.divider} />
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+              <span>Bags: <strong>{p.manual_bags}</strong></span>
+              <span>Rate: <strong>₹{p.rate_per_bag}</strong></span>
+              <span style={{ color: isClosed ? clr.red : clr.green }}>Remaining: <strong>{remaining}</strong></span>
+            </div>
+            <div style={{ ...s.row, marginTop: 8 }}>
+              <button onClick={() => { setEditItem(p); setForm({ ...p }); setShowForm(true); }} style={{ ...s.btnSm(), flex: 1 }}><Icon name="edit" size={10} /></button>
+              <button onClick={() => { if(window.confirm("Delete?")) opsP.deleteItem(p.id); }} style={{ ...s.btnSm(), flex: 1 }}><Icon name="trash" size={10} color={clr.red} /></button>
+            </div>
+          </div>
+        );
+      })}
+
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Purchase Form">
+        <Field label="Lot ID"><input style={s.input} value={form.lot_id} onChange={e => setForm({ ...form, lot_id: e.target.value })} disabled={editItem} /></Field>
         <Field label="Farmer Name"><input style={s.input} value={form.farmer_name} onChange={e => setForm({ ...form, farmer_name: e.target.value })} /></Field>
         <Field label="Bags"><input type="number" style={s.input} value={form.manual_bags} onChange={e => setForm({ ...form, manual_bags: e.target.value })} /></Field>
         <Field label="Weight (kg)"><input type="number" style={s.input} value={form.total_weight} onChange={e => setForm({ ...form, total_weight: e.target.value })} /></Field>
-        <Field label="Rate/Bag"><input type="number" style={s.input} value={form.rate_per_bag} onChange={e => setForm({ ...form, rate_per_bag: e.target.value })} /></Field>
-        <Field label="Cold Storage"><select style={s.select} value={form.cold_storage_id} onChange={e => setForm({ ...form, cold_storage_id: e.target.value })}><option value="">Select</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
-        <Field label="Variety"><select style={s.select} value={form.variety} onChange={e => setForm({ ...form, variety: e.target.value })}><option value="">Select</option>{varieties.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}</select></Field>
-        <Field label="Grading"><select style={s.select} value={form.grading} onChange={e => setForm({ ...form, grading: e.target.value })}><option value="">Select</option>{gradings.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}</select></Field>
+        <Field label="Rate per Bag"><input type="number" style={s.input} value={form.rate_per_bag} onChange={e => setForm({ ...form, rate_per_bag: e.target.value })} /></Field>
+        <Field label="Cold Storage"><select style={s.select} value={form.cold_storage_id} onChange={e => setForm({ ...form, cold_storage_id: e.target.value })}><option value="">Select Storage</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
         <button onClick={save} style={s.btn()}>Save</button>
       </Modal>
     </div>
   );
 };
 
-// ==========================================
-// 3. DISPATCH SCREEN (WITH AUTO VALUE & WS SUMMARY)
-// ==========================================
-const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis }) => {
+// ===== DISPATCH (SAME) =====
+const DispatchScreen = ({ dispatches, purchases, opsD, varieties, parties, mandis, coldStorages }) => {
   const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [wsMsg, setWsMsg] = useState("");
-  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", items: [], date: today(), destination_party_id: "", mandi_id: "" });
-  const [itemForm, setItemForm] = useState({ lot_id: "", loaded_bags: "", loaded_weight: "", rate_per_bag: 0, value: 0, variety: "", grading: "" });
+  const [shareMsg, setShareMsg] = useState("");
+  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", items: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "" });
+  const [itemForm, setItemForm] = useState({ lot_id: "", loaded_bags: "", loaded_weight: "" });
 
-  const activeLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0 || (editingId && p.lot_id));
-
-  const handleLotSelect = (lotId) => {
-    const lot = purchases.find(p => p.lot_id === lotId);
-    if (lot) {
-      setItemForm({
-        ...itemForm,
-        lot_id: lotId,
-        rate_per_bag: lot.rate_per_bag,
-        variety: lot.variety || "N/A",
-        grading: lot.grading || "N/A"
-      });
-    }
-  };
-
-  const handleBagsChange = (bags) => {
-    const calculatedValue = (parseFloat(bags) || 0) * (parseFloat(itemForm.rate_per_bag) || 0);
-    setItemForm({ ...itemForm, loaded_bags: bags, value: calculatedValue });
-  };
+  const availableLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0);
 
   const addItem = () => {
-    if (!itemForm.lot_id || !itemForm.loaded_bags || !itemForm.loaded_weight) return alert("Sari fields bharein!");
-    setForm(p => ({ ...p, items: [...p.items, { ...itemForm }] }));
-    setItemForm({ lot_id: "", loaded_bags: "", loaded_weight: "", rate_per_bag: 0, value: 0, variety: "", grading: "" });
-  };
-
-  const openEdit = (d) => {
-    setEditingId(d.id);
-    setForm({ ...d });
-    setShowForm(true);
+    if (!itemForm.lot_id || !itemForm.loaded_bags || !itemForm.loaded_weight) return alert("Fill lot details");
+    const lot = purchases.find(p => p.lot_id === itemForm.lot_id);
+    const remaining = getRemainingBags(lot, dispatches);
+    if (parseFloat(itemForm.loaded_bags) > remaining) return alert(`Only ${remaining} available`);
+    const stdBags = (parseFloat(itemForm.loaded_weight) / 52.5).toFixed(2);
+    setForm(p => ({ ...p, items: [...p.items, { ...itemForm, std_bags: stdBags, loaded_cost: stdBags * (lot.rate_per_bag || 0), variety_id: lot.variety_id }] }));
+    setItemForm({ lot_id: "", loaded_bags: "", loaded_weight: "" });
   };
 
   const save = async () => {
-    if (!form.gatepass_id || form.items.length === 0) return alert("Gatepass aur items zaroori hain!");
-    
-    let success = false;
-    if (editingId) {
-      success = await opsD.updateItem(editingId, form);
-    } else {
-      const res = await opsD.addItem({ id: uid(), ...form });
-      success = !!res;
+    if (!form.gatepass_id || !form.destination_party_id || !form.mandi_id || form.items.length === 0) {
+      return alert("❌ Fill Gatepass ID, Mandi, Party and Lots!");
     }
-
-    if (success) {
-      // Create WhatsApp summary format
-      let summary = `📝 *DISPATCH GATEPASS SUMMARY*\n\n`;
-      summary += `*GP No:* ${form.gatepass_id}\n`;
-      summary += `*Vehicle:* ${form.vehicle_number}\n`;
-      summary += `*Driver:* ${form.driver_name}\n`;
-      summary += `-------------------------\n`;
-      form.items.forEach((i, index) => {
-        summary += `${index + 1}) *Lot:* ${i.lot_id}\n`;
-        summary += `   *Bags:* ${i.loaded_bags} Bags\n`;
-        summary += `   *Weight:* ${i.loaded_weight} Kg\n`;
-        summary += `   *Variety:* ${i.variety} | *Grading:* ${i.grading}\n\n`;
-      });
-      summary += `*Total Loaded Bags:* ${form.items.reduce((s, i) => s + (parseFloat(i.loaded_bags) || 0), 0)}`;
-      
+    const result = await opsD.addItem({ ...form, id: uid() });
+    if (result) {
+      const pName = parties.find(p => p.id === form.destination_party_id)?.name || "N/A";
+      const mName = mandis.find(m => m.id === form.mandi_id)?.name || "N/A";
+      let msg = `🚚 *ALOO TRADER DISPATCH*\n---------\n*GP:* ${form.gatepass_id}\n*Vehicle:* ${form.vehicle_number}\n*Party:* ${pName}\n*Mandi:* ${mName}\n---------\n*LOTS:*\n`;
+      form.items.forEach(i => { msg += `• ${i.lot_id} | ${i.loaded_bags} bags | ${i.loaded_weight}kg\n`; });
+      setShareMsg(msg);
       setShowForm(false);
-      setEditingId(null);
-      setWsMsg(summary);
     }
   };
 
   return (
     <div style={s.content}>
-      <div style={s.rowBetween}>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>Dispatches</div>
-        <button onClick={() => { setEditingId(null); setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", items: [], date: today(), destination_party_id: "", mandi_id: "" }); setShowForm(true); }} style={{ ...s.btnSm(clr.blue, "#fff") }}>+ New</button>
+      <div style={{ ...s.rowBetween, marginBottom: 12 }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>Dispatch Logistics</span>
+        <button onClick={() => { setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", items: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "" }); setShowForm(true); }} style={s.btn()}><Icon name="add" size={12} /> New</button>
       </div>
+
+      {shareMsg && (
+        <div style={{ ...s.card, background: clr.green + "22", borderColor: clr.green }}>
+          <div style={s.label}>📋 Copyable Dispatch Summary</div>
+          <pre style={{ fontSize: 11, background: "#0005", padding: 8, whiteSpace: "pre-wrap", color: clr.text, borderRadius: 4 }}>{shareMsg}</pre>
+          <button onClick={() => { navigator.clipboard.writeText(shareMsg); alert("Copied!"); setShareMsg(""); }} style={{ ...s.btn(clr.green, "#fff"), marginTop: 6 }}>Copy to Clipboard</button>
+        </div>
+      )}
 
       {dispatches.map(d => (
         <div key={d.id} style={s.card}>
-          <div style={s.rowBetween}>
-            <Badge v={`GP: ${d.gatepass_id}`} color={clr.blue} />
-            <div style={s.row}>
-              <button onClick={() => openEdit(d)} style={s.btnSm(clr.card2, clr.text)}>Edit</button>
-              <button onClick={() => opsD.deleteItem(d.id)} style={s.btnSm(clr.red + "22", clr.red)}>Del</button>
-            </div>
+          <div style={s.rowBetween}><Badge v={`GP: ${d.gatepass_id}`} color={clr.blue} /><span>{d.vehicle_number}</span></div>
+          <div style={{ fontSize: 11, marginTop: 4, color: clr.muted }}>
+            Party: <strong>{parties.find(p => p.id === d.destination_party_id)?.name || "N/A"}</strong> | Mandi: <strong>{mandis.find(m => m.id === d.mandi_id)?.name || "N/A"}</strong>
           </div>
-          <div style={{ fontSize: 11, color: clr.muted, marginTop: 4 }}>
-            {d.vehicle_number} • {d.items?.length || 0} Lots • {d.items?.reduce((s, i) => s + (parseFloat(i.loaded_bags) || 0), 0) || 0} Bags
+          <div style={{ ...s.row, marginTop: 8 }}>
+            <button onClick={() => { if(window.confirm("Delete?")) opsD.deleteItem(d.id); }} style={{ ...s.btnSm(), width: "100%", color: clr.red }}><Icon name="trash" size={10} color={clr.red} /> Delete</button>
           </div>
         </div>
       ))}
 
-      <Modal open={showForm} onClose={() => setShowForm(false)} title={editingId ? "Edit Dispatch" : "Create Dispatch"}>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="New Dispatch Entry">
         <Field label="Gatepass ID"><input style={s.input} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} /></Field>
-        <Field label="Vehicle"><input style={s.input} value={form.vehicle_number} onChange={e => setForm({ ...form, vehicle_number: e.target.value })} /></Field>
-        <Field label="Driver"><input style={s.input} value={form.driver_name} onChange={e => setForm({ ...form, driver_name: e.target.value })} /></Field>
-        <Field label="Party"><select style={s.select} value={form.destination_party_id} onChange={e => setForm({ ...form, destination_party_id: e.target.value })}><option value="">Select Party</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+        <Field label="Vehicle Number"><input style={s.input} value={form.vehicle_number} onChange={e => setForm({ ...form, vehicle_number: e.target.value })} /></Field>
+        <Field label="Destination Party"><select style={s.select} value={form.destination_party_id} onChange={e => setForm({ ...form, destination_party_id: e.target.value })}><option value="">Select Party</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
         <Field label="Mandi"><select style={s.select} value={form.mandi_id} onChange={e => setForm({ ...form, mandi_id: e.target.value })}><option value="">Select Mandi</option>{mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
+        <Field label="From Cold Storage"><select style={s.select} value={form.cold_storage_id} onChange={e => setForm({ ...form, cold_storage_id: e.target.value })}><option value="">Select Storage</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
         
         <div style={{ ...s.card2, background: clr.card, padding: 8, marginBottom: 10 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: clr.accent, marginBottom: 6 }}>ADD/APPEND LOT</div>
-          <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_id} onChange={e => handleLotSelect(e.target.value)}><option value="">Select Lot</option>{activeLots.map(l => <option key={l.id} value={l.lot_id}>{l.lot_id}</option>)}</select>
-          <input type="number" placeholder="Bags" style={{ ...s.input, marginBottom: 6 }} value={itemForm.loaded_bags} onChange={e => handleBagsChange(e.target.value)} />
-          <input type="number" placeholder="Weight (kg)" style={{ ...s.input, marginBottom: 6 }} value={itemForm.loaded_weight} onChange={e => setItemForm({ ...itemForm, loaded_weight: e.target.value })} />
-          
-          {itemForm.lot_id && (
-            <div style={{ fontSize: 11, marginBottom: 6, color: clr.green }}>
-              Auto Cost: ₹{fmt(itemForm.value)} ({itemForm.variety} | {itemForm.grading})
-            </div>
-          )}
-          <button onClick={addItem} style={{ ...s.btnSm(clr.accent + "22", clr.accent), width: "100%" }}>+ Add Lot to Dispatch</button>
+          <div style={s.label}>Load Lots into Truck</div>
+          <select style={{ ...s.select, marginBottom: 4 }} value={itemForm.lot_id} onChange={e => setItemForm({ ...itemForm, lot_id: e.target.value })}><option value="">Select Lot</option>{availableLots.map(l => <option key={l.id} value={l.lot_id}>{l.lot_id}</option>)}</select>
+          <input type="number" style={{ ...s.input, marginBottom: 4 }} placeholder="Bags" value={itemForm.loaded_bags} onChange={e => setItemForm({ ...itemForm, loaded_bags: e.target.value })} />
+          <input type="number" style={{ ...s.input, marginBottom: 4 }} placeholder="Weight (kg)" value={itemForm.loaded_weight} onChange={e => setItemForm({ ...itemForm, loaded_weight: e.target.value })} />
+          <button onClick={addItem} style={{ ...s.btnSm(clr.accent, "#000"), width: "100%" }}>Add Lot</button>
         </div>
-
-        {form.items.length > 0 && (
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: clr.muted, marginBottom: 4 }}>LOTS ATTACHED</div>
-            {form.items.map((i, idx) => (
-              <div key={idx} style={{ ...s.card2, marginBottom: 4, fontSize: 11, display:'flex', justifyContent:'space-between' }}>
-                <div>{i.lot_id} • {i.loaded_bags} Bags • {i.loaded_weight}kg • Value: ₹{fmt(i.value)}</div>
-                <button onClick={() => setForm(p => ({ ...p, items: p.items.filter((_, gId) => gId !== idx) }))} style={{ background:'none', border:'none', color:clr.red }}>✕</button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <button onClick={save} style={s.btn(clr.blue, "#fff")}>Confirm & Save</button>
+        <button onClick={save} style={{ ...s.btn() }}>Save Dispatch Logistics</button>
       </Modal>
-
-      <WhatsappPopup msg={wsMsg} onClose={() => setWsMsg("")} />
     </div>
   );
 };
 
-// ==========================================
-// 4. SALE SCREEN (EXPENSES & EQUAL SPLIT)
-// ==========================================
-const SaleScreen = ({ sales, dispatches, opsSales }) => {
+// ===== SALE (SAME) =====
+const SaleScreen = ({ sales, dispatches, purchases, opsSales, parties, mandis }) => {
   const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState({ gatepass_id: "", date: today(), lot_sales: [], commission_pct: 0, hamali_per_bag: 0, gatepass_expense: 0, transport_expense: 0 });
+  const [selectedGatepass, setSelectedGatepass] = useState("");
+  const [form, setForm] = useState({ gatepass_id: "", date: today(), lot_sales: [], transport: 0, commission_percent: 0, hamali_per_bag: 0, other_expenses: 0 });
 
-  const loadGatepass = (gpId) => {
-    const d = dispatches.find(x => x.gatepass_id === gpId);
-    if (d) {
-      const lotSales = d.items?.map(i => ({
-        lot_id: i.lot_id,
-        loaded_bags: i.loaded_bags,
-        loaded_weight: i.loaded_weight,
-        received_weight: i.loaded_weight, 
-        rate_per_kg: 0,
-        original_value: i.value || 0
+  const loadGatepassLots = (gpId) => {
+    setSelectedGatepass(gpId);
+    const dispatch = dispatches.find(d => d.gatepass_id === gpId);
+    if (dispatch) {
+      const items = dispatch.items?.map(i => ({
+        lot_id: i.lot_id, loaded_bags: i.loaded_bags, loaded_weight: i.loaded_weight, received_weight: i.loaded_weight, sale_rate_per_kg: 0
       })) || [];
-      setForm(p => ({ ...p, gatepass_id: gpId, lot_sales: lotSales }));
+      setForm(prev => ({ ...prev, gatepass_id: gpId, lot_sales: items }));
     }
   };
 
-  const updateLot = (idx, updates) => {
+  const updateSaleItem = (idx, updates) => {
     const updated = [...form.lot_sales];
     updated[idx] = { ...updated[idx], ...updates };
-    setForm(p => ({ ...p, lot_sales: updated }));
+    setForm(prev => ({ ...prev, lot_sales: updated }));
   };
 
-  const openEdit = (sale) => {
-    setEditingId(sale.id);
-    setForm({ ...sale });
-    setShowForm(true);
-  };
+  const totalSaleValue = form.lot_sales.reduce((sum, i) => sum + ((parseFloat(i.received_weight) || 0) * (parseFloat(i.sale_rate_per_kg) || 0)), 0);
+  const totalExpenses = (parseFloat(form.transport) || 0) + (parseFloat(form.other_expenses) || 0) + (form.lot_sales.reduce((sum, i) => sum + ((parseFloat(i.loaded_bags) || 0) * (parseFloat(form.hamali_per_bag) || 0)), 0));
 
   const save = async () => {
-    if (!form.gatepass_id || form.lot_sales.length === 0) return alert("Fill mandatory fields!");
-    
-    // Equal split calculations
-    const totalLots = form.lot_sales.length;
-    const splitGatepass = (parseFloat(form.gatepass_expense) || 0) / totalLots;
-    const splitTransport = (parseFloat(form.transport_expense) || 0) / totalLots;
-
-    const finalLotSales = form.lot_sales.map(lot => {
-      const saleVal = (parseFloat(lot.received_weight) || 0) * (parseFloat(lot.rate_per_kg) || 0);
-      const weightLoss = (parseFloat(lot.loaded_weight) || 0) - (parseFloat(lot.received_weight) || 0);
-      
-      const commVal = saleVal * ((parseFloat(form.commission_pct) || 0) / 100);
-      const hamaliVal = (parseFloat(lot.loaded_bags) || 0) * (parseFloat(form.hamali_per_bag) || 0);
-      
-      const totalAllocatedExpense = commVal + hamaliVal + splitGatepass + splitTransport;
-      const netEarnings = saleVal - totalAllocatedExpense;
-      const netProfitLoss = netEarnings - (parseFloat(lot.original_value) || 0);
-
-      return {
-        ...lot,
-        sale_value: saleVal,
-        weight_loss: weightLoss,
-        allocated_expense: totalAllocatedExpense,
-        profit_loss: netProfitLoss
-      };
-    });
-
-    const payload = { ...form, lot_sales: finalLotSales };
-
-    if (editingId) {
-      await opsSales.updateItem(editingId, payload);
-    } else {
-      await opsSales.addItem({ id: uid(), ...payload });
-    }
-
-    setForm({ gatepass_id: "", date: today(), lot_sales: [], commission_pct: 0, hamali_per_bag: 0, gatepass_expense: 0, transport_expense: 0 });
-    setEditingId(null);
-    setShowForm(false);
+    if (!form.gatepass_id || form.lot_sales.length === 0) return alert("❌ Fill all fields!");
+    const result = await opsSales.addItem({ ...form, total_sale_value: totalSaleValue, total_expenses: totalExpenses, net_profit: totalSaleValue - totalExpenses });
+    if (result) { setShowForm(false); setSelectedGatepass(""); setForm({ gatepass_id: "", date: today(), lot_sales: [], transport: 0, commission_percent: 0, hamali_per_bag: 0, other_expenses: 0 }); }
   };
 
   return (
     <div style={s.content}>
-      <div style={s.rowBetween}>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>Mandi Sales</div>
-        <button onClick={() => { setEditingId(null); setShowForm(true); }} style={{ ...s.btnSm(clr.purple, "#fff") }}>+ New Sale</button>
+      <div style={{ ...s.rowBetween, marginBottom: 12 }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>Mandi Sales</span>
+        <button onClick={() => { setSelectedGatepass(""); setForm({ gatepass_id: "", date: today(), lot_sales: [], transport: 0, commission_percent: 0, hamali_per_bag: 0, other_expenses: 0 }); setShowForm(true); }} style={s.btn(clr.green, "#fff")}>New Sale</button>
       </div>
 
-      {sales.map(sal => (
-        <div key={sal.id} style={s.card}>
-          <div style={s.rowBetween}>
-            <Badge v={`GP Reference: ${sal.gatepass_id}`} color={clr.purple} />
-            <div style={s.row}>
-              <button onClick={() => openEdit(sal)} style={s.btnSm(clr.card2, clr.text)}>Edit</button>
-              <button onClick={() => opsSales.deleteItem(sal.id)} style={s.btnSm(clr.red + "22", clr.red)}>Del</button>
-            </div>
+      {sales.map(sx => (
+        <div key={sx.id} style={s.card}>
+          <div style={s.rowBetween}><Badge v={`GP: ${sx.gatepass_id}`} color={clr.green} /><span>₹{fmt(sx.total_sale_value)}</span></div>
+          <div style={{ ...s.row, marginTop: 8 }}>
+            <button onClick={() => { if(window.confirm("Delete?")) opsSales.deleteItem(sx.id); }} style={{ ...s.btnSm(), width: "100%", color: clr.red }}>Delete</button>
           </div>
-          {sal.lot_sales?.map((l, idx) => (
-            <div key={idx} style={{ fontSize: 11, marginTop: 4, background: clr.card2, padding: 6, borderRadius: 4 }}>
-              <div><strong>Lot {l.lot_id}</strong> | Profit/Loss: <span style={{ color: l.profit_loss >= 0 ? clr.green : clr.red, fontWeight:'bold' }}>₹{fmt(l.profit_loss)}</span></div>
-              <div style={{ color: clr.muted, fontSize: 10 }}>Loss Wt: {l.weight_loss} kg | Total Allocated Exp: ₹{fmt(l.allocated_expense)}</div>
-            </div>
-          ))}
         </div>
       ))}
 
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Mandi Billing Entry">
-        <Field label="Load Gatepass"><select style={s.select} value={form.gatepass_id} onChange={e => loadGatepass(e.target.value)}><option value="">Select Dispatch</option>{dispatches.map(d => <option key={d.id} value={d.gatepass_id}>{d.gatepass_id}</option>)}</select></Field>
-        
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-          <Field label="Commission %"><input type="number" style={s.input} value={form.commission_pct} onChange={e => setForm({ ...form, commission_pct: e.target.value })} /></Field>
-          <Field label="Hamali / Bag"><input type="number" style={s.input} value={form.hamali_per_bag} onChange={e => setForm({ ...form, hamali_per_bag: e.target.value })} /></Field>
-          <Field label="Mandi Gatepass (₹)"><input type="number" style={s.input} value={form.gatepass_expense} onChange={e => setForm({ ...form, gatepass_expense: e.target.value })} /></Field>
-          <Field label="Transport (₹)"><input type="number" style={s.input} value={form.transport_expense} onChange={e => setForm({ ...form, transport_expense: e.target.value })} /></Field>
-        </div>
-
-        {form.lot_sales.map((lot, idx) => (
-          <div key={idx} style={{ ...s.card2, padding: 8, marginTop: 8 }}>
-            <div style={{ fontWeight: 700, fontSize: 12, color: clr.accent }}>LOT: {lot.lot_id} (Load Wt: {lot.loaded_weight}kg)</div>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6, marginTop:4 }}>
-              <Field label="Recd Wt (kg)"><input type="number" style={s.input} value={lot.received_weight} onChange={e => updateLot(idx, { received_weight: e.target.value })} /></Field>
-              <Field label="Sale Rate/kg"><input type="number" style={s.input} value={lot.rate_per_kg} onChange={e => updateLot(idx, { rate_per_kg: e.target.value })} /></Field>
-            </div>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="File New Mandi Sale">
+        <Field label="Select Gatepass Track"><select style={s.select} value={selectedGatepass} onChange={e => loadGatepassLots(e.target.value)}><option value="">Select GP Link</option>{dispatches.map(d => <option key={d.id} value={d.gatepass_id}>{d.gatepass_id}</option>)}</select></Field>
+        {form.lot_sales.map((item, idx) => (
+          <div key={idx} style={s.card2}>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>Lot ID: {item.lot_id}</div>
+            <Field label="Received Weight"><input type="number" style={s.input} value={item.received_weight} onChange={e => updateSaleItem(idx, { received_weight: e.target.value })} /></Field>
+            <Field label="Sale Rate (₹/kg)"><input type="number" step="0.01" style={s.input} value={item.sale_rate_per_kg} onChange={e => updateSaleItem(idx, { sale_rate_per_kg: e.target.value })} /></Field>
           </div>
         ))}
-
-        <button onClick={save} style={{ ...s.btn(clr.purple, "#fff"), marginTop: 10 }}>Process & Calculate Split</button>
+        <Field label="Transport (₹)"><input type="number" style={s.input} value={form.transport} onChange={e => setForm({ ...form, transport: e.target.value })} /></Field>
+        <Field label="Hamali Per Bag"><input type="number" style={s.input} value={form.hamali_per_bag} onChange={e => setForm({ ...form, hamali_per_bag: e.target.value })} /></Field>
+        <button onClick={save} style={s.btn(clr.green, "#fff")}>Save Sale Data</button>
       </Modal>
     </div>
   );
 };
 
-// ==========================================
-// 5. MASTER UTILITIES MANAGEMENT SCREEN
-// ==========================================
-const MasterScreen = ({ coldStorages, parties, mandis, gradings, varieties, opsCs, opsParties, opsMandis, opsG, opsV }) => {
-  const [activeTab, setActiveTab] = useState("COLD");
-  const [name, setName] = useState("");
+// ===== PAYMENT SCREEN (NEW!) =====
+const PaymentScreen = ({ sales, dispatches, purchases, payments, opsPayment, parties }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ gatepass_id: "", amount: "", payment_mode: "cash", date: today(), notes: "" });
 
-  const handleAdd = async () => {
-    if (!name) return;
-    const payload = { id: uid(), name };
-    if (activeTab === "COLD") await opsCs.addItem(payload);
-    if (activeTab === "PARTY") await opsParties.addItem(payload);
-    if (activeTab === "MANDI") await opsMandis.addItem(payload);
-    if (activeTab === "GRADING") await opsG.addItem(payload);
-    if (activeTab === "VARIETY") await opsV.addItem(payload);
-    setName("");
+  const save = async () => {
+    if (!form.gatepass_id || !form.amount) return alert("❌ Fill all fields!");
+    const dispatch = dispatches.find(d => d.gatepass_id === form.gatepass_id);
+    const sale = sales.find(s => s.gatepass_id === form.gatepass_id);
+    const party = parties.find(p => p.id === dispatch?.destination_party_id);
+    
+    await opsPayment.addItem({ 
+      id: uid(), 
+      ...form, 
+      party_name: party?.name || "Unknown",
+      sale_value: sale?.total_sale_value || 0
+    });
+    setForm({ gatepass_id: "", amount: "", payment_mode: "cash", date: today(), notes: "" });
+    setShowForm(false);
   };
 
-  const getList = () => {
-    if (activeTab === "COLD") return { data: coldStorages, ops: opsCs };
-    if (activeTab === "PARTY") return { data: parties, ops: opsParties };
-    if (activeTab === "MANDI") return { data: mandis, ops: opsMandis };
-    if (activeTab === "GRADING") return { data: gradings, ops: opsG };
-    return { data: varieties, ops: opsV };
-  };
-
-  const current = getList();
+  // ✅ CALCULATE PARTY DUES
+  const partyDues = parties.map(p => {
+    const dispatchesToParty = dispatches.filter(d => d.destination_party_id === p.id);
+    const gpsToParty = dispatchesToParty.map(d => d.gatepass_id);
+    const salesToParty = sales.filter(s => gpsToParty.includes(s.gatepass_id));
+    const totalSale = salesToParty.reduce((sum, s) => sum + (parseFloat(s.total_sale_value) || 0), 0);
+    const paidAmount = payments.filter(py => gpsToParty.includes(py.gatepass_id) && py.party_name === p.name).reduce((sum, py) => sum + (parseFloat(py.amount) || 0), 0);
+    const due = totalSale - paidAmount;
+    return { id: p.id, name: p.name, phone: p.phone, totalSale, paid: paidAmount, due: Math.max(0, due) };
+  }).filter(p => p.due > 0);
 
   return (
     <div style={s.content}>
-      <div style={{ display: "flex", gap: 4, overflowX: "auto", marginBottom: 10 }}>
-        {["COLD", "PARTY", "MANDI", "GRADING", "VARIETY"].map(t => (
-          <button key={t} onClick={() => setActiveTab(t)} style={s.btnSm(activeTab === t ? clr.accent : clr.card2, activeTab === t ? "#000" : clr.text)}>{t}</button>
-        ))}
+      <div style={{ ...s.rowBetween, marginBottom: 12 }}>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>Payments & Dues</div>
+        <button onClick={() => setShowForm(true)} style={s.btn(clr.orange, "#000")}>+ Record</button>
       </div>
 
-      <div style={s.row}>
-        <input style={s.input} placeholder={`Add New ${activeTab}`} value={name} onChange={e => setName(e.target.value)} />
-        <button onClick={handleAdd} style={{ ...s.btnSm(clr.green, "#fff"), padding: "8px 14px" }}>+</button>
-      </div>
-
-      <div style={{ marginTop: 10 }}>
-        {current.data.map(item => (
-          <div key={item.id} style={{ ...s.card2, ...s.rowBetween }}>
-            <span>{item.name}</span>
-            <button onClick={() => current.ops.deleteItem(item.id)} style={{ background: 'none', border: 'none', color: clr.red, cursor: 'pointer' }}>✕ Delete</button>
+      <div style={{ fontSize: 10, fontWeight: 700, color: clr.muted, marginBottom: 6 }}>✅ PARTY DUES (Pending)</div>
+      {partyDues.length === 0 ? (
+        <div style={{ ...s.card2, textAlign: "center", color: clr.muted, fontSize: 12 }}>All dues cleared! ✓</div>
+      ) : (
+        partyDues.map(p => (
+          <div key={p.id} style={{ ...s.card2, marginBottom: 6 }}>
+            <div style={s.rowBetween}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 12 }}>{p.name}</div>
+                <div style={{ fontSize: 10, color: clr.muted }}>{p.phone}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 10, color: clr.muted }}>Due</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: clr.red }}>₹{fmt(p.due)}</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 10, marginTop: 4, color: clr.muted }}>Sold: ₹{fmt(p.totalSale)} | Paid: ₹{fmt(p.paid)}</div>
           </div>
-        ))}
-      </div>
+        ))
+      )}
+
+      <div style={{ fontSize: 10, fontWeight: 700, color: clr.muted, marginTop: 12, marginBottom: 6 }}>💳 PAYMENT HISTORY (Last 5)</div>
+      {payments.slice(0, 5).map(p => (
+        <div key={p.id} style={{ ...s.card2, fontSize: 11, marginBottom: 4 }}>
+          <div style={s.rowBetween}>
+            <span>{p.party_name}</span>
+            <strong>₹{fmt(p.amount)}</strong>
+          </div>
+          <div style={{ fontSize: 10, color: clr.muted }}>GP: {p.gatepass_id} • {p.payment_mode} • {p.date}</div>
+        </div>
+      ))}
+
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Record Payment">
+        <Field label="Gatepass ID"><select style={s.select} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })}><option value="">Select</option>{sales.map(s => <option key={s.id} value={s.gatepass_id}>{s.gatepass_id}</option>)}</select></Field>
+        <Field label="Amount (₹)"><input type="number" style={s.input} value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></Field>
+        <Field label="Mode"><select style={s.select} value={form.payment_mode} onChange={e => setForm({ ...form, payment_mode: e.target.value })}><option value="cash">Cash</option><option value="upi">UPI</option><option value="cheque">Cheque</option><option value="rtgs">RTGS</option><option value="imps">IMPS</option></select></Field>
+        <Field label="Date"><input type="date" style={s.input} value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></Field>
+        <Field label="Notes"><input style={s.input} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Optional" /></Field>
+        <button onClick={save} style={s.btn(clr.orange, "#000")}>Record Payment</button>
+      </Modal>
     </div>
   );
 };
 
-// ==========================================
-// 6. PAYMENTS & ACCOUNTS LEDGER SCREEN
-// ==========================================
-const PaymentsScreen = ({ payments, coldStorages, parties, opsPayments }) => {
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ type: "COLD_PAYMENT", entity_id: "", amount: "", mode: "UPI", date: today() });
-
-  const save = async () => {
-    if (!form.entity_id || !form.amount) return alert("Sari details bharein!");
-    await opsPayments.addItem({ id: uid(), ...form });
-    setForm({ type: "COLD_PAYMENT", entity_id: "", amount: "", mode: "UPI", date: today() });
-    setShowForm(false);
-  };
+// ===== COLD STORAGE DUE SCREEN (NEW!) =====
+const ColdStorageDueScreen = ({ purchases, dispatches, coldStorages, payments }) => {
+  const coldStorageDues = coldStorages.map(cs => {
+    const lotsAtCS = purchases.filter(p => p.cold_storage_id === cs.id);
+    const totalPurchased = lotsAtCS.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0);
+    return { id: cs.id, name: cs.name, phone: cs.phone, totalPurchased };
+  }).filter(c => c.totalPurchased > 0);
 
   return (
     <div style={s.content}>
-      <div style={s.rowBetween}>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>Ledger Accounts & Payments</div>
-        <button onClick={() => setShowForm(true)} style={{ ...s.btnSm(clr.green, "#fff") }}>+ New Entry</button>
-      </div>
+      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>❄️ Cold Storage Dues</div>
 
-      <div style={{ marginTop: 10 }}>
-        {payments.map(p => {
-          const entityName = p.type === "COLD_PAYMENT" 
-            ? coldStorages.find(c => c.id === p.entity_id)?.name || "Cold Storage"
-            : parties.find(pt => pt.id === p.entity_id)?.name || "Party";
-
-          return (
-            <div key={p.id} style={s.card2}>
-              <div style={s.rowBetween}>
-                <strong>{entityName}</strong>
-                <Badge v={p.type} color={p.type === "COLD_PAYMENT" ? clr.red : clr.green} />
+      {coldStorageDues.length === 0 ? (
+        <div style={{ ...s.card2, textAlign: "center", color: clr.muted, fontSize: 12 }}>No cold storage dues</div>
+      ) : (
+        coldStorageDues.map(cs => (
+          <div key={cs.id} style={s.card}>
+            <div style={s.rowBetween}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 12 }}>{cs.name}</div>
+                <div style={{ fontSize: 10, color: clr.muted }}>{cs.phone}</div>
               </div>
-              <div style={{ ...s.rowBetween, fontSize: 11, marginTop: 4, color: clr.muted }}>
-                <span>Paid via: {p.mode} ({p.date})</span>
-                <strong style={{ color: clr.text, fontSize: 13 }}>₹{fmt(p.amount)}</strong>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 10, color: clr.muted }}>Due</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: clr.orange }}>₹{fmt(cs.totalPurchased)}</div>
               </div>
             </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+};
+
+// ===== P&L REPORT (SAME) =====
+const PnLScreen = ({ sales, purchases, dispatches, parties, mandis }) => {
+  return (
+    <div style={s.content}>
+      <div style={s.label}>Gatepass-wise Realized Sales & Profit</div>
+      <div style={s.divider} />
+      {sales.length === 0 ? <div style={{ fontSize: 12, color: clr.muted }}>No closed sales yet.</div> : sales.map(sale => {
+        const matchingDispatch = dispatches.find(d => d.gatepass_id === sale.gatepass_id);
+        const partyName = parties.find(p => p.id === matchingDispatch?.destination_party_id)?.name || "Unknown";
+        const mandiName = mandis.find(m => m.id === matchingDispatch?.mandi_id)?.name || "Unknown";
+        let totalGatepassPurchaseCost = 0;
+        
+        return (
+          <div key={sale.id} style={{ ...s.card, borderLeft: `3px solid ${clr.blue}` }}>
+            <div style={s.rowBetween}>
+              <Badge v={`GP: ${sale.gatepass_id}`} color={clr.blue} />
+              <span style={{ fontSize: 11, fontWeight: 700, color: clr.green }}>Mandi: {mandiName}</span>
+            </div>
+            <div style={{ fontSize: 12, color: clr.muted, marginTop: 4 }}>To: <strong>{partyName}</strong> via {matchingDispatch?.vehicle_number || "N/A"}</div>
+            <div style={s.divider} />
+            
+            <div style={{ fontSize: 11, color: clr.accent, fontWeight: 700, marginBottom: 4 }}>LOT BREAKDOWN:</div>
+            {sale.lot_sales?.map((ls, idx) => {
+              const originalPurchase = purchases.find(p => p.lot_id === ls.lot_id);
+              const cost = (parseFloat(ls.loaded_bags) || 0) * (parseFloat(originalPurchase?.rate_per_bag) || 0);
+              totalGatepassPurchaseCost += cost;
+              const revenue = (parseFloat(ls.received_weight) || 0) * (parseFloat(ls.sale_rate_per_kg) || 0);
+              const lotProfit = revenue - cost;
+              return (
+                <div key={idx} style={{ ...s.card2, background: "#0002", marginBottom: 4, padding: 6 }}>
+                  <div style={s.rowBetween}>
+                    <span><strong>{ls.lot_id}</strong> ({ls.loaded_bags} Bags)</span>
+                    <span style={{ color: lotProfit >= 0 ? clr.green : clr.red }}>P&L: ₹{fmt(lotProfit)}</span>
+                  </div>
+                </div>
+              );
+            })}
+
+            <div style={s.divider} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 11, background: clr.card2, padding: 6, borderRadius: 6 }}>
+              <div>Cost: <strong>₹{fmt(totalGatepassPurchaseCost)}</strong></div>
+              <div>Sale Value: <strong style={{ color: clr.green }}>₹{fmt(sale.total_sale_value)}</strong></div>
+              <div>Expenses: <strong style={{ color: clr.orange }}>₹{fmt(sale.total_expenses)}</strong></div>
+              <div style={{ gridColumn: "1 / span 2", borderTop: `1px solid ${clr.border}`, paddingTop: 4 }}>
+                Net Profit: <strong style={{ color: (sale.total_sale_value - totalGatepassPurchaseCost - sale.total_expenses) >= 0 ? clr.green : clr.red }}>₹{fmt(sale.total_sale_value - totalGatepassPurchaseCost - sale.total_expenses)}</strong>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ===== DUE TRACKING (SAME) =====
+const DueTrackingScreen = ({ sales, purchases, dispatches, coldStorages, parties }) => {
+  return (
+    <div style={s.content}>
+      <div style={s.card}>
+        <div style={s.label}>💳 Active Party Dues</div>
+        <div style={s.divider} />
+        {parties.map((p, idx) => {
+          const partyDispatches = dispatches.filter(d => d.destination_party_id === p.id);
+          const totalDispatchedCost = partyDispatches.flatMap(d => d.items || []).reduce((sum, i) => sum + (parseFloat(i.loaded_cost) || 0), 0);
+          const totalReceivedRevenue = sales.filter(s => partyDispatches.some(pd => pd.gatepass_id === s.gatepass_id)).reduce((sum, s) => sum + (parseFloat(s.total_sale_value) || 0), 0);
+          const balanceDue = totalReceivedRevenue - totalDispatchedCost;
+          if (balanceDue <= 0) return null;
+          return (
+            <div key={idx} style={s.card2}><div style={s.rowBetween}><span>{p.name}</span><strong style={{ color: clr.red }}>₹{fmt(balanceDue)}</strong></div></div>
           );
         })}
       </div>
+    </div>
+  );
+};
 
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Record Payment Transaction">
-        <Field label="Transaction Type">
-          <select style={s.select} value={form.type} onChange={e => setForm({ ...form, type: e.target.value, entity_id: "" })}>
-            <option value="COLD_PAYMENT">Cold Storage ko Paisa Diya (Debit)</option>
-            <option value="PARTY_RECEIPT">Party se Paisa Aya (Credit)</option>
-          </select>
-        </Field>
+// ===== MASTER (SAME) =====
+const MasterSection = ({ title, items, fields, ops }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({});
 
-        <Field label="Select Account Entity">
-          <select style={s.select} value={form.entity_id} onChange={e => setForm({ ...form, entity_id: e.target.value })}>
-            <option value="">Select Target Account</option>
-            {form.type === "COLD_PAYMENT" 
-              ? coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)
-              : parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)
-            }
-          </select>
-        </Field>
+  const save = async () => {
+    if (!form[fields[0].key]?.trim()) return alert("Fill field");
+    await ops.addItem({ id: uid(), ...form });
+    setShowForm(false);
+    setForm({});
+  };
 
-        <Field label="Amount (₹)"><input type="number" style={s.input} value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></Field>
-        
-        <Field label="Payment Mode">
-          <select style={s.select} value={form.mode} onChange={e => setForm({ ...form, mode: e.target.value })}>
-            <option value="UPI">UPI / PhonePe / GPay</option>
-            <option value="CASH">Cash</option>
-            <option value="NET_BANKING">IMPS / NEFT / Bank Transfer</option>
-          </select>
-        </Field>
-
-        <button onClick={save} style={s.btn(clr.green, "#fff")}>Submit Ledger Voucher</button>
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={s.rowBetween}><span style={{ fontWeight: 700 }}>{title}</span><button onClick={() => setShowForm(true)} style={s.btnSm()}>Add</button></div>
+      {items.map(item => (
+        <div key={item.id} style={{ ...s.card2, margin: "4px 0" }}>{item[fields[0].key]}</div>
+      ))}
+      <Modal open={showForm} onClose={() => setShowForm(false)} title={`Add ${title}`}>
+        {fields.map(f => <Field key={f.key} label={f.label}><input style={s.input} value={form[f.key] || ""} onChange={e => setForm({ ...form, [f.key]: e.target.value })} /></Field>)}
+        <button onClick={save} style={s.btn()}>Save</button>
       </Modal>
     </div>
   );
 };
 
-// ==========================================
-// MAIN CONTAINER ROOT APPLICATION
-// ==========================================
-export default function App() {
-  const [screen, setScreen] = useState("DASHBOARD");
+const MasterScreen = ({ varieties, gradings, coldStorages, mandis, parties, opsV, opsG, opsCS, opsM, opsPA }) => (
+  <div style={s.content}>
+    <MasterSection title="Varieties" items={varieties} fields={[{ key: "name", label: "Name" }]} ops={opsV} />
+    <MasterSection title="Gradings" items={gradings} fields={[{ key: "name", label: "Name" }]} ops={opsG} />
+    <MasterSection title="Cold Storages" items={coldStorages} fields={[{ key: "name", label: "Name" }]} ops={opsCS} />
+    <MasterSection title="Mandis" items={mandis} fields={[{ key: "name", label: "Name" }]} ops={opsM} />
+    <MasterSection title="Parties" items={parties} fields={[{ key: "name", label: "Name" }]} ops={opsPA} />
+  </div>
+);
 
-  const opsP = useSupabaseTable("purchases");
-  const opsD = useSupabaseTable("dispatches");
-  const opsSales = useSupabaseTable("sales");
-  const opsPayments = useSupabaseTable("payments");
-  const opsCs = useSupabaseTable("cold_storages");
-  const opsParties = useSupabaseTable("parties");
-  const opsMandis = useSupabaseTable("mandis");
-  const opsG = useSupabaseTable("gradings");
-  const opsV = useSupabaseTable("varieties");
+// ===== MAIN APP =====
+export default function App() {
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const varieties = useSupabaseTable("varieties");
+  const gradings = useSupabaseTable("gradings");
+  const coldStorages = useSupabaseTable("cold_storages");
+  const mandis = useSupabaseTable("mandis");
+  const parties = useSupabaseTable("parties");
+  const purchases = useSupabaseTable("purchases");
+  const dispatches = useSupabaseTable("dispatches");
+  const sales = useSupabaseTable("sales");
+  const payments = useSupabaseTable("payments");
 
   return (
     <div style={s.screen}>
       <div style={s.header}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: clr.accent }} />
-          <strong style={{ fontSize: 14, letterSpacing: 0.5 }}>POTATO ERP v2</strong>
-        </div>
-        <Badge v={today()} color={clr.muted} />
+        <span style={{ fontWeight: 800, fontSize: 16, color: clr.accent }}>🥔 AlooTrader v4.1 MERGED</span>
+        <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
-      {screen === "DASHBOARD" && <DashboardScreen purchases={opsP.data} dispatches={opsD.data} sales={opsSales.data} payments={opsPayments.data} />}
-      {screen === "PURCHASE" && <PurchaseScreen purchases={opsP.data} dispatches={opsD.data} opsP={opsP} coldStorages={opsCs.data} gradings={opsG.data} varieties={opsV.data} />}
-      {screen === "DISPATCH" && <DispatchScreen dispatches={opsD.data} purchases={opsP.data} opsD={opsD} parties={opsParties.data} mandis={opsMandis.data} />}
-      {screen === "SALE" && <SaleScreen sales={opsSales.data} dispatches={opsD.data} opsSales={opsSales} />}
-      {screen === "PAYMENT" && <PaymentsScreen payments={opsPayments.data} coldStorages={opsCs.data} parties={opsParties.data} opsPayments={opsPayments} />}
-      {screen === "MASTER" && <MasterScreen coldStorages={opsCs.data} parties={opsParties.data} mandis={opsMandis.data} gradings={opsG.data} varieties={opsV.data} opsCs={opsCs} opsParties={opsParties} opsMandis={opsMandis} opsG={opsG} opsV={opsV} />}
+      {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} sales={sales.data} payments={payments.data} parties={parties.data} mandis={mandis.data} coldStorages={coldStorages.data} />}
+      {activeTab === "purchase" && <PurchaseScreen purchases={purchases.data} dispatches={dispatches.data} opsP={purchases} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
+      {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} varieties={varieties.data} parties={parties.data} mandis={mandis.data} coldStorages={coldStorages.data} />}
+      {activeTab === "sale" && <SaleScreen sales={sales.data} dispatches={dispatches.data} purchases={purchases.data} opsSales={sales} parties={parties.data} mandis={mandis.data} />}
+      {activeTab === "payment" && <PaymentScreen sales={sales.data} dispatches={dispatches.data} purchases={purchases.data} payments={payments.data} opsPayment={payments} parties={parties.data} />}
+      {activeTab === "colddue" && <ColdStorageDueScreen purchases={purchases.data} dispatches={dispatches.data} coldStorages={coldStorages.data} payments={payments.data} />}
+      {activeTab === "pnl" && <PnLScreen sales={sales.data} purchases={purchases.data} dispatches={dispatches.data} parties={parties.data} mandis={mandis.data} />}
+      {activeTab === "due" && <DueTrackingScreen sales={sales.data} purchases={purchases.data} dispatches={dispatches.data} coldStorages={coldStorages.data} parties={parties.data} />}
+      {activeTab === "master" && <MasterScreen varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} mandis={mandis.data} parties={parties.data} opsV={varieties} opsG={gradings} opsCS={coldStorages} opsM={mandis} opsPA={parties} />}
 
       <div style={s.navBar}>
-        <button onClick={() => setScreen("DASHBOARD")} style={s.navItem(screen === "DASHBOARD")}>📊<span>Dash</span></button>
-        <button onClick={() => setScreen("PURCHASE")} style={s.navItem(screen === "PURCHASE")}>🚜<span>Buy</span></button>
-        <button onClick={() => setScreen("DISPATCH")} style={s.navItem(screen === "DISPATCH")}>🚛<span>Disp</span></button>
-        <button onClick={() => setScreen("SALE")} style={s.navItem(screen === "SALE")}>⚖️<span>Mandi</span></button>
-        <button onClick={() => setScreen("PAYMENT")} style={s.navItem(screen === "PAYMENT")}>💳<span>Cash</span></button>
-        <button onClick={() => setScreen("MASTER")} style={s.navItem(screen === "MASTER")}>⚙️<span>Setup</span></button>
+        <button onClick={() => setActiveTab("dashboard")} style={s.navItem(activeTab === "dashboard")}>📊</button>
+        <button onClick={() => setActiveTab("purchase")} style={s.navItem(activeTab === "purchase")}>📥</button>
+        <button onClick={() => setActiveTab("dispatch")} style={s.navItem(activeTab === "dispatch")}>📤</button>
+        <button onClick={() => setActiveTab("sale")} style={s.navItem(activeTab === "sale")}>💰</button>
+        <button onClick={() => setActiveTab("payment")} style={s.navItem(activeTab === "payment")}>💳</button>
+        <button onClick={() => setActiveTab("colddue")} style={s.navItem(activeTab === "colddue")}>❄️</button>
+        <button onClick={() => setActiveTab("pnl")} style={s.navItem(activeTab === "pnl")}>📈</button>
+        <button onClick={() => setActiveTab("due")} style={s.navItem(activeTab === "due")}>📊</button>
+        <button onClick={() => setActiveTab("master")} style={s.navItem(activeTab === "master")}>⚙️</button>
       </div>
     </div>
   );
