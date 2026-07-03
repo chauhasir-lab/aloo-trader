@@ -233,38 +233,39 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   );
 };
 
-// ===== DISPATCH LOGISTICS (FIXED VALUE FETCHING & IN-FORM CALCULATIONS) =====
+// ===== DISPATCH LOGISTICS (FIXED: MANUAL WEIGHT BASED VALUE CALCULATION) =====
 const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStorages }) => {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0 });
-  const [itemForm, setItemForm] = useState({ lot_number: "", purchase_bags: "" });
+  const [itemForm, setItemForm] = useState({ lot_number: "", purchase_bags: "", purchase_weight_kg: "" });
 
   const availableLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0);
 
   const addLotToTruck = () => {
-    if (!itemForm.lot_number || !itemForm.purchase_bags) return alert("❌ Please fill Lot and Bags!");
+    if (!itemForm.lot_number || !itemForm.purchase_bags || !itemForm.purchase_weight_kg) {
+      return alert("❌ Please fill Lot, Bags and Manual Weight!");
+    }
+    
     const matchedPurchase = purchases.find(p => p.lot_id === itemForm.lot_number);
     if (!matchedPurchase) return alert("❌ Lot Selection Missing!");
     
     const remaining = getRemainingBags(matchedPurchase, dispatches);
     const bagsToLoad = parseInt(itemForm.purchase_bags);
+    const manualWeight = parseFloat(itemForm.purchase_weight_kg);
 
     if (bagsToLoad > remaining) return alert(`Only ${remaining} bags available in this lot!`);
     
-    // Exact weight calculation according to standard 52.5 kg base rule
-    const computedWeightKg = bagsToLoad * 52.5;
+    // Core Formula Rule Fix: Value calculation strictly on manual weight base
     const originalRatePerBag = parseFloat(matchedPurchase.rate_per_bag) || 0;
     const ratePerKg = originalRatePerBag / 52.5;
-    
-    // Multi lot live value tracking formula calculation loop block
-    const calculatedLotValue = bagsToLoad * originalRatePerBag;
+    const calculatedLotValue = manualWeight * ratePerKg;
 
     const newLot = {
       lot_number: itemForm.lot_number,
       purchase_bags: bagsToLoad,
-      purchase_weight_kg: computedWeightKg,
+      purchase_weight_kg: manualWeight,
       purchase_rate_per_kg: ratePerKg,
-      purchase_lot_value: calculatedLotValue, // Live Display field inside array payload
+      purchase_lot_value: calculatedLotValue,
       mandi_arrived_weight_kg: 0,
       mandi_sale_rate_per_kg: 0
     };
@@ -279,7 +280,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
       };
     });
     
-    setItemForm({ lot_number: "", purchase_bags: "" });
+    setItemForm({ lot_number: "", purchase_bags: "", purchase_weight_kg: "" });
   };
 
   const save = async () => {
@@ -305,7 +306,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
           </div>
           <div style={{ marginTop: 6, fontSize: 13, background: "#0002", padding: 6, borderRadius: 6 }}>
             <strong>Loaded Value:</strong> ₹{fmt(d.total_purchase_amount)}<br/>
-            <strong>Lots:</strong> {d.lot_details?.map(l => `${l.lot_number} (${l.purchase_bags} Bags - ₹${fmt(l.purchase_lot_value)})`).join(", ")}
+            <strong>Lots:</strong> {d.lot_details?.map(l => `${l.lot_number} (${l.purchase_bags} Bags / ${l.purchase_weight_kg} kg - ₹${fmt(l.purchase_lot_value)})`).join(", ")}
           </div>
           <div style={{ ...s.row, marginTop: 10 }}>
             <button onClick={() => { if(window.confirm("Delete?")) opsD.deleteItem(d.id); }} style={{ ...s.btnSm(), width: "100%", color: clr.red }}><Icon name="trash" size={12} color={clr.red} /> Remove</button>
@@ -323,6 +324,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
           <div style={s.label}>🚚 Load Multiple Lots into Truck</div>
           <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_number} onChange={e => setItemForm({ ...itemForm, lot_number: e.target.value })}><option value="">Select Available Lot</option>{availableLots.map(l => <option key={l.id} value={l.lot_id}>{l.lot_id}</option>)}</select>
           <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Bags Count to Load" value={itemForm.purchase_bags} onChange={e => setItemForm({ ...itemForm, purchase_bags: e.target.value })} />
+          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Enter Manual Weight (kg)" value={itemForm.purchase_weight_kg} onChange={e => setItemForm({ ...itemForm, purchase_weight_kg: e.target.value })} />
           <button onClick={addLotToTruck} style={{ ...s.btnSm(clr.accent, "#000"), width: "100%" }}>+ Fetch Value & Add Lot</button>
         </div>
 
