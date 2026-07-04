@@ -8,7 +8,6 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const useSupabaseTable = (tableName) => {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -29,7 +28,6 @@ const useSupabaseTable = (tableName) => {
       if (err) { alert(`❌ Error: ${err.message}`); return null; }
       if (d && d.length > 0) {
         setData([d[0], ...data]);
-        alert("✅ Saved!");
         return d[0];
       }
     } catch (e) { alert(`Error: ${e.message}`); }
@@ -40,7 +38,6 @@ const useSupabaseTable = (tableName) => {
       const { error: err } = await supabase.from(tableName).update(updates).eq("id", id);
       if (err) { alert(`Error: ${err.message}`); return false; }
       setData(data.map(x => x.id === id ? { ...x, ...updates } : x));
-      alert("✅ Updated!");
       return true;
     } catch (e) { alert(`Error: ${e.message}`); }
   };
@@ -54,7 +51,7 @@ const useSupabaseTable = (tableName) => {
     } catch (e) { alert(`Error: ${e.message}`); }
   };
 
-  return { data, loading, error, addItem, editItem, deleteItem };
+  return { data, loading, addItem, editItem, deleteItem };
 };
 
 const uid = () => Math.random().toString(36).slice(2, 9).toUpperCase();
@@ -97,14 +94,9 @@ const s = {
 
 const Icon = ({ name, size = 18, color = clr.text }) => {
   const icons = {
-    dashboard: "M3 3h2v2H3V3zm4 0h2v2H7V3zm4 0h2v2h-2V3zm4 0h2v2h-2V3zM3 7h2v2H3V7zm4 0h2v2H7V7zm4 0h2v2h-2V7zm4 0h2v2h-2V7zM3 11h2v2H3v-2zm4 0h2v2H7v-2zm4 0h2v2h-2v-2zm4 0h2v2h-2v-2z",
-    purchase: "M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z",
-    dispatch: "M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0",
-    sale: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
     add: "M12 4v16m8-8H4", x: "M6 18L18 6M6 6l12 12", trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
     edit: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
-    search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z",
-    download: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+    info: "M12 16v-4m0-4h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z"
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icons[name]} /></svg>;
 };
@@ -112,8 +104,11 @@ const Icon = ({ name, size = 18, color = clr.text }) => {
 const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div style={s.label}>{label}</div>{children}</div>;
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 14, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
 
-// ===== DASHBOARD =====
+// ===== DASHBOARD WITH LAST 3 ENTRIES =====
 const DashboardScreen = ({ purchases, dispatches, payments, parties, mandis }) => {
+  const totalBagsPurchased = purchases.reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
+  const totalBagsRemaining = purchases.reduce((sum, p) => sum + getRemainingBags(p, dispatches), 0);
+
   const activeLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0).length;
   const closedLots = purchases.filter(p => getRemainingBags(p, dispatches) <= 0).length;
 
@@ -127,8 +122,13 @@ const DashboardScreen = ({ purchases, dispatches, payments, parties, mandis }) =
   return (
     <div style={s.content}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-        <div style={{ ...s.card2, background: clr.blue + "15" }}><div style={s.label}>Active Lots</div><div style={{ fontSize: 22, fontWeight: 800, color: clr.blue }}>{activeLots}</div></div>
-        <div style={{ ...s.card2, background: clr.red + "15" }}><div style={s.label}>Closed Lots</div><div style={{ fontSize: 22, fontWeight: 800, color: clr.red }}>{closedLots}</div></div>
+        <div style={{ ...s.card2, background: clr.accent + "15" }}><div style={s.label}>Total Bags Stock</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.accent }}>{totalBagsPurchased} Bags</div></div>
+        <div style={{ ...s.card2, background: clr.green + "15" }}><div style={s.label}>Total Remaining</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.green }}>{totalBagsRemaining} Bags</div></div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
+        <div style={{ ...s.card2, background: clr.blue + "15" }}><div style={s.label}>Active Lots</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.blue }}>{activeLots} Lots</div></div>
+        <div style={{ ...s.card2, background: clr.red + "15" }}><div style={s.label}>Closed Lots</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.red }}>{closedLots} Lots</div></div>
       </div>
 
       <div style={{ ...s.card, background: clr.green + "15" }}>
@@ -141,31 +141,54 @@ const DashboardScreen = ({ purchases, dispatches, payments, parties, mandis }) =
         </div>
       </div>
 
-      <div style={{ ...s.card, background: (netProfit >= 0 ? clr.green : clr.red) + "15" }}>
-        <div style={s.label}>Realized Net Profit / Loss</div>
-        <div style={s.divider} />
-        <div style={{ fontSize: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span>Total Purchase Cost:</span><strong>₹{fmt(totalPurchaseCost)}</strong></div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span>Gross Mandi Revenue:</span><strong style={{ color: clr.green }}>₹{fmt(totalSaleValue)}</strong></div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span>Total Expenses (Kat Kar):</span><strong style={{ color: clr.orange }}>₹{fmt(totalExpenses)}</strong></div>
-          <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${clr.border}`, paddingTop: 6 }}><span style={{ fontWeight: 600 }}>Net GP Return:</span><strong style={{ color: netProfit >= 0 ? clr.green : clr.red, fontSize: 16 }}>₹{fmt(netProfit)}</strong></div>
+      {/* RECENT ACTIVITIES - LAST 3 ENTRIES SECTION */}
+      <div style={{ marginTop: 20 }}>
+        <span style={{ ...s.label, fontSize: "14px", color: clr.accent }}>📋 Recent Activities (Last 3)</span>
+        
+        <div style={{ ...s.card, marginTop: 10 }}>
+          <div style={{ ...s.label, fontSize: "11px", color: clr.blue }}>Last 3 Purchases</div>
+          {purchases.slice(0, 3).map((p, i) => (
+            <div key={i} style={{ fontSize: "13px", margin: "6px 0", display: "flex", justifyContent: "space-between" }}>
+              <span>{p.farmer_name} ({p.lot_id})</span><strong>{p.manual_bags} Bags</strong>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ ...s.card }}>
+          <div style={{ ...s.label, fontSize: "11px", color: clr.purple }}>Last 3 Dispatches</div>
+          {dispatches.slice(0, 3).map((d, i) => (
+            <div key={i} style={{ fontSize: "13px", margin: "6px 0", display: "flex", justifyContent: "space-between" }}>
+              <span>GP: {d.gatepass_id} ({d.vehicle_number})</span><strong>{d.lot_details?.reduce((acc, curr) => acc + (parseInt(curr.purchase_bags) || 0), 0)} Bags</strong>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ ...s.card }}>
+          <div style={{ ...s.label, fontSize: "11px", color: clr.green }}>Last 3 Mandi Sales</div>
+          {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).slice(0, 3).map((sx, i) => (
+            <div key={i} style={{ fontSize: "13px", margin: "6px 0", display: "flex", justifyContent: "space-between" }}>
+              <span>GP: {sx.gatepass_id} ({mandis.find(m => m.id === sx.mandi_id)?.name || "Mandi"})</span><strong style={{ color: clr.green }}>₹{fmt(sx.total_mandi_sale_amount)}</strong>
+            </div>
+          ))}
         </div>
       </div>
     </div>
   );
 };
 
-// ===== PURCHASE SCREEN =====
+// ===== PURCHASE SCREEN WITH CLOSED/ACTIVE STATUS =====
 const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, coldStorages }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() });
   
+  const totalBags = purchases.reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
+  const totalRemaining = purchases.reduce((sum, p) => sum + getRemainingBags(p, dispatches), 0);
+
   const save = async () => {
     if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag || !form.total_weight) {
       return alert("❌ Fill all required fields!");
     }
-    
     const ratePerKg = parseFloat(form.rate_per_bag) / 52.5;
     const currentTotalCost = parseFloat(form.total_weight) * ratePerKg;
     const payload = { ...form, std_bags: (parseFloat(form.total_weight) / 52.5).toFixed(2), total_cost: currentTotalCost };
@@ -181,6 +204,11 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
 
   return (
     <div style={s.content}>
+      <div style={{ ...s.card2, background: clr.card, display: "flex", justifyContent: "space-between", marginBottom: 12, padding: 10 }}>
+        <div>Total Stock: <strong>{totalBags} Bags</strong></div>
+        <div>Remaining Balance: <strong style={{ color: clr.green }}>{totalRemaining} Bags</strong></div>
+      </div>
+
       <div style={{ ...s.rowBetween, marginBottom: 14 }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>Purchase Book</span>
         <button onClick={() => { setEditItem(null); setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() }); setShowForm(true); }} style={s.btn(clr.accent, "#000")}><Icon name="add" size={14} /> Add New</button>
@@ -192,19 +220,22 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
         return (
           <div key={p.id} style={{ ...s.card, borderLeft: `4px solid ${isClosed ? clr.red : clr.green}` }}>
             <div style={s.rowBetween}>
-              <Badge v={p.lot_id} color={isClosed ? clr.red : clr.accent} />
+              <div style={s.row}>
+                <Badge v={p.lot_id} color={isClosed ? clr.red : clr.accent} />
+                <Badge v={isClosed ? "CLOSED" : "ACTIVE"} color={isClosed ? clr.red : clr.green} />
+              </div>
               <span style={{ fontSize: 12, color: clr.muted }}>{p.date}</span>
             </div>
             <div style={{ fontWeight: 700, fontSize: 15, marginTop: 6 }}>{p.farmer_name}</div>
             
-            <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
               <span style={{ fontSize: 12, color: clr.accent }}>Var: {varieties.find(v => v.id === p.variety_id)?.name || "N/A"}</span>
               <span style={{ fontSize: 12, color: clr.purple }}>Grade: {gradings.find(g => g.id === p.grading_id)?.name || "N/A"}</span>
             </div>
 
             <div style={s.divider} />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13 }}>
-              <div>Manual Bags: <strong>{p.manual_bags}</strong></div>
+              <div>Total Bags: <strong>{p.manual_bags}</strong></div>
               <div>Remaining Bags: <strong style={{ color: remaining > 0 ? clr.green : clr.red }}>{remaining}</strong></div>
               <div>Rate/Bag (52.5k): <strong>₹{p.rate_per_bag}</strong></div>
               <div>Total Value: <strong style={{ color: clr.green }}>₹{fmt(p.total_cost)}</strong></div>
@@ -233,9 +264,11 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   );
 };
 
-// ===== DISPATCH LOGISTICS =====
-const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStorages }) => {
+// ===== DISPATCH LOGISTICS WITH POP-UP MESSAGE DETAIL =====
+const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varieties, gradings }) => {
   const [showForm, setShowForm] = useState(false);
+  const [showPopModal, setShowPopModal] = useState(false);
+  const [popData, setPopData] = useState(null);
   const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0 });
   const [itemForm, setItemForm] = useState({ lot_number: "", purchase_bags: "", purchase_weight_kg: "" });
 
@@ -266,30 +299,38 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
       purchase_bags: bagsToLoad, 
       purchase_weight_kg: manualWeight,
       purchase_rate_per_kg: ratePerKg,
-      purchase_lot_value: calculatedLotValue, 
+      purchase_lot_value: calculatedLotValue,
+      variety_name: varieties.find(v => v.id === matchedPurchase.variety_id)?.name || "N/A",
+      grading_name: gradings.find(g => g.id === matchedPurchase.grading_id)?.name || "N/A",
       mandi_arrived_weight_kg: 0,
       mandi_sale_rate_per_kg: 0
     };
 
     setForm(p => {
       const updatedDetails = [...p.lot_details, newLot];
-      const aggregatedPurchaseCost = updatedDetails.reduce((s, item) => s + item.purchase_lot_value, 0);
       return { 
         ...p, 
         lot_details: updatedDetails,
-        total_purchase_amount: aggregatedPurchaseCost
+        total_purchase_amount: updatedDetails.reduce((s, item) => s + item.purchase_lot_value, 0)
       };
     });
     
     setItemForm({ lot_number: "", purchase_bags: "", purchase_weight_kg: "" });
   };
 
+  const triggerPopMsg = (dispatchObj) => {
+    setPopData(dispatchObj);
+    setShowPopModal(true);
+  };
+
   const save = async () => {
     if (!form.gatepass_id || !form.destination_party_id || !form.mandi_id || form.lot_details.length === 0) {
       return alert("❌ Complete the form with at least 1 Lot!");
     }
-    await opsD.addItem({ ...form, id: uid() });
+    const storedObj = { ...form, id: uid() };
+    const result = await opsD.addItem(storedObj);
     setShowForm(false);
+    triggerPopMsg(storedObj);
   };
 
   return (
@@ -301,19 +342,40 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
 
       {dispatches.map(d => (
         <div key={d.id} style={s.card}>
-          <div style={s.rowBetween}><Badge v={`GP: ${d.gatepass_id}`} color={clr.blue} /><strong>{d.vehicle_number}</strong></div>
+          <div style={s.rowBetween}><Badge v={`GP: ${d.gatepass_id}`} color={clr.blue} /><strong style={{color: clr.accent}}>{d.vehicle_number}</strong></div>
           <div style={{ fontSize: 13, marginTop: 6, color: clr.muted }}>
             To: <strong>{parties.find(p => p.id === d.destination_party_id)?.name || "N/A"}</strong> | Mandi: {mandis.find(m => m.id === d.mandi_id)?.name || "N/A"}
           </div>
-          <div style={{ marginTop: 6, fontSize: 13, background: "#0002", padding: 6, borderRadius: 6 }}>
-            <strong>Loaded Value:</strong> ₹{fmt(d.total_purchase_amount)}<br/>
-            <strong>Lots:</strong> {d.lot_details?.map(l => `${l.lot_number} (${l.purchase_bags} Bags Tally / ${l.purchase_weight_kg} kg - ₹${fmt(l.purchase_lot_value)})`).join(", ")}
-          </div>
           <div style={{ ...s.row, marginTop: 10 }}>
-            <button onClick={() => { if(window.confirm("Delete?")) opsD.deleteItem(d.id); }} style={{ ...s.btnSm(), width: "100%", color: clr.red }}><Icon name="trash" size={12} color={clr.red} /> Remove</button>
+            <button onClick={() => triggerPopMsg(d)} style={{ ...s.btnSm(clr.blue + "22", clr.blue), flex: 1 }}><Icon name="info" size={12} color={clr.blue} /> Dispatch Details Pop</button>
+            <button onClick={() => { if(window.confirm("Delete?")) opsD.deleteItem(d.id); }} style={{ ...s.btnSm(), color: clr.red }}><Icon name="trash" size={12} color={clr.red} /></button>
           </div>
         </div>
       ))}
+
+      {/* DISPATCH DETAILS SUMMARY POP-UP */}
+      <Modal open={showPopModal} onClose={() => setShowPopModal(false)} title="📦 Loaded Dispatch Details Summary">
+        {popData && (
+          <div style={{ fontSize: "14px", lineHeight: "1.6" }}>
+            <div><strong>Gatepass ID:</strong> {popData.gatepass_id}</div>
+            <div><strong>Vehicle Number:</strong> {popData.vehicle_number}</div>
+            <div><strong>Party Destination:</strong> {parties.find(p => p.id === popData.destination_party_id)?.name || "N/A"}</div>
+            <div><strong>Target Mandi:</strong> {mandis.find(m => m.id === popData.mandi_id)?.name || "N/A"}</div>
+            <div style={s.divider} />
+            <div style={{ fontWeight: 700, color: clr.accent, marginBottom: 6 }}>LOTS LOADED IN TRUCK:</div>
+            {popData.lot_details?.map((l, i) => (
+              <div key={i} style={{ background: clr.card2, padding: 8, borderRadius: 6, marginBottom: 6, fontSize: "13px" }}>
+                <div>• <strong>Lot ID:</strong> {l.lot_number}</div>
+                <div>• <strong>Variety:</strong> {l.variety_name || "N/A"} | <strong>Grading:</strong> {l.grading_name || "N/A"}</div>
+                <div>• <strong>Bags Tally Count:</strong> {l.purchase_bags} Bags</div>
+                <div>• <strong>Actual Weight:</strong> {l.purchase_weight_kg} kg</div>
+              </div>
+            ))}
+            <div style={s.divider} />
+            <button onClick={() => setShowPopModal(false)} style={s.btn(clr.green, "#fff")}>Acknowledge Close</button>
+          </div>
+        )}
+      </Modal>
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="New Dispatch Entry">
         <Field label="Gatepass ID"><input style={s.input} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} /></Field>
@@ -334,11 +396,9 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
             <strong>Selected Lots Queue:</strong>
             {form.lot_details.map((l, i) => (
               <div key={i} style={{ color: clr.green, marginTop: 4 }}>
-                • Lot {l.lot_number} — {l.purchase_bags} Bags Tally ({l.purchase_weight_kg} kg) ➔ <strong style={{color: clr.accent}}>₹{fmt(l.purchase_lot_value)}</strong>
+                • Lot {l.lot_number} — {l.purchase_bags} Bags ({l.purchase_weight_kg} kg)
               </div>
             ))}
-            <div style={{ ...s.divider, margin: "6px 0" }} />
-            <div>Total Truck Purchase Cost: <strong>₹{fmt(form.total_purchase_amount)}</strong></div>
           </div>
         )}
 
@@ -348,8 +408,8 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
   );
 };
 
-// ===== MANDI SALE SCREEN (INTEGRATED INTERNAL LOGIC PROCESSING) =====
-const SaleScreen = ({ sales, dispatches, opsD }) => {
+// ===== MANDI SALE SCREEN =====
+const SaleScreen = ({ dispatches, opsD }) => {
   const [showForm, setShowForm] = useState(false);
   const [selectedDispatchId, setSelectedDispatchId] = useState("");
   const [form, setForm] = useState({ id: "", gatepass_id: "", lot_details: [], transport: "", commission_percent: "", hamali_per_bag: "", other_expenses: "" });
@@ -381,18 +441,14 @@ const SaleScreen = ({ sales, dispatches, opsD }) => {
     const hamaliRate = parseFloat(form.hamali_per_bag) || 0;
     const otherCost = parseFloat(form.other_expenses) || 0;
 
-    // 1. Calculate Gross Mandi Sale Revenue & Weight Metrics for Each Lot
     const processedLots = form.lot_details.map(l => {
       const grossSaleVal = (l.mandi_arrived_weight_kg || 0) * (l.mandi_sale_rate_per_kg || 0);
       const wtLoss = Math.max(0, (l.purchase_weight_kg || 0) - (l.mandi_arrived_weight_kg || 0));
-      const wtLossAmt = wtLoss * (l.purchase_rate_per_kg || 0);
-      
-      // Dynamic Lot-wise Allocation metrics for P&L Screen usage
       return {
         ...l,
         lot_gross_sale_value: grossSaleVal,
         weight_loss_kg: wtLoss,
-        weight_loss_amount: wtLossAmt,
+        weight_loss_amount: wtLoss * (l.purchase_rate_per_kg || 0),
         lot_net_profit_loss: grossSaleVal - (l.purchase_lot_value || 0)
       };
     });
@@ -401,13 +457,9 @@ const SaleScreen = ({ sales, dispatches, opsD }) => {
     const totalHamali = processedLots.reduce((sum, l) => sum + ((l.purchase_bags || 0) * hamaliRate), 0);
     const totalCommission = totalGrossRevenue * (commissionPct / 100);
 
-    // 2. Final Consolidated Expenses
     const consolidatedExpenses = transportCost + totalCommission + totalHamali + otherCost;
-
-    // 3. Find target dispatch purchase amount to deduce net structural P&L
     const originalDispatch = dispatches.find(d => d.id === form.id);
     const totalPurchaseCost = originalDispatch ? (parseFloat(originalDispatch.total_purchase_amount) || 0) : 0;
-    const netReturnVal = totalGrossRevenue - totalPurchaseCost - consolidatedExpenses;
 
     const finalPayload = {
       lot_details: processedLots,
@@ -417,7 +469,7 @@ const SaleScreen = ({ sales, dispatches, opsD }) => {
       other_expenses: otherCost,
       total_mandi_sale_amount: totalGrossRevenue,
       total_expenses: consolidatedExpenses,
-      net_gp_profit_loss: netReturnVal
+      net_gp_profit_loss: totalGrossRevenue - totalPurchaseCost - consolidatedExpenses
     };
 
     const success = await opsD.editItem(form.id, finalPayload);
@@ -435,7 +487,6 @@ const SaleScreen = ({ sales, dispatches, opsD }) => {
         <div key={sx.id} style={s.card}>
           <div style={s.rowBetween}><Badge v={`GP Link: ${sx.gatepass_id}`} color={clr.green} /><strong>₹{fmt(sx.total_mandi_sale_amount)}</strong></div>
           <div style={{ fontSize: 13, color: clr.muted, marginTop: 4 }}>Total Expenses Cut: ₹{fmt(sx.total_expenses)}</div>
-          <div style={{ fontSize: 13, color: sx.net_gp_profit_loss >= 0 ? clr.green : clr.red }}>Net Result: ₹{fmt(sx.net_gp_profit_loss)}</div>
         </div>
       ))}
 
@@ -514,8 +565,7 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
 const ColdStorageDueScreen = ({ purchases, coldStorages }) => {
   const coldStorageDues = coldStorages.map(cs => {
     const lotsAtCS = purchases.filter(p => p.cold_storage_id === cs.id);
-    const totalPurchasedValue = lotsAtCS.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0);
-    return { id: cs.id, name: cs.name, totalPurchased: totalPurchasedValue };
+    return { id: cs.id, name: cs.name, totalPurchased: lotsAtCS.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0) };
   }).filter(c => c.totalPurchased > 0);
 
   return (
@@ -558,13 +608,6 @@ const PnLScreen = ({ dispatches, parties, mandis }) => {
                   <div style={{ ...s.rowBetween, fontWeight: 700, color: clr.accent }}>
                     <span>Lot: {ls.lot_number} ({ls.purchase_bags} Bags)</span>
                     <span style={{ color: netLotProfit >= 0 ? clr.green : clr.red }}>Lot P&L: ₹{fmt(netLotProfit)}</span>
-                  </div>
-                  <div style={s.divider} />
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px", fontSize: 12, color: clr.text }}>
-                    <div>Khareedi Vajan: <strong>{fmt(ls.purchase_weight_kg)} kg</strong></div>
-                    <div>Mandi Vajan: <strong>{fmt(ls.mandi_arrived_weight_kg)} kg</strong></div>
-                    <div>Weight Loss: <strong style={{ color: clr.red }}>{fmt(ls.weight_loss_kg, 1)} kg</strong></div>
-                    <div>Loss Value: <strong style={{ color: clr.orange }}>₹{fmt(ls.weight_loss_amount)}</strong></div>
                   </div>
                 </div>
               );
@@ -637,13 +680,13 @@ export default function App() {
   return (
     <div style={s.screen}>
       <div style={s.header}>
-        <span style={{ street: "normal", fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 AlooTrader v4.5</span>
+        <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 AlooTrader v5.0</span>
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
       {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} payments={payments.data} parties={parties.data} mandis={mandis.data} />}
       {activeTab === "purchase" && <PurchaseScreen purchases={purchases.data} dispatches={dispatches.data} opsP={purchases} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
-      {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} coldStorages={coldStorages.data} />}
+      {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} varieties={varieties.data} gradings={gradings.data} />}
       {activeTab === "sale" && <SaleScreen sales={[]} dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} />}
       {activeTab === "payment" && <PaymentScreen dispatches={dispatches.data} purchases={purchases.data} payments={payments.data} opsPayment={payments} parties={parties.data} />}
       {activeTab === "colddue" && <ColdStorageDueScreen purchases={purchases.data} coldStorages={coldStorages.data} />}
