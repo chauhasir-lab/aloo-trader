@@ -104,8 +104,8 @@ const Icon = ({ name, size = 18, color = clr.text }) => {
 const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div style={s.label}>{label}</div>{children}</div>;
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 14, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
 
-// ===== DASHBOARD WITH LAST 3 ENTRIES =====
-const DashboardScreen = ({ purchases, dispatches, payments, parties, mandis }) => {
+// ===== DASHBOARD SCREEN =====
+const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
   const totalBagsPurchased = purchases.reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
   const totalBagsRemaining = purchases.reduce((sum, p) => sum + getRemainingBags(p, dispatches), 0);
 
@@ -113,11 +113,8 @@ const DashboardScreen = ({ purchases, dispatches, payments, parties, mandis }) =
   const closedLots = purchases.filter(p => getRemainingBags(p, dispatches) <= 0).length;
 
   const totalSaleValue = dispatches.reduce((sum, d) => sum + (parseFloat(d.total_mandi_sale_amount) || 0), 0);
-  const totalExpenses = dispatches.reduce((sum, d) => sum + (parseFloat(d.total_expenses) || 0), 0);
-  const totalPurchaseCost = dispatches.reduce((sum, d) => sum + (parseFloat(d.total_purchase_amount) || 0), 0);
   const totalPaymentsReceived = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
   const pendingDue = totalSaleValue - totalPaymentsReceived;
-  const netProfit = dispatches.reduce((sum, d) => sum + (parseFloat(d.net_gp_profit_loss) || 0), 0);
 
   return (
     <div style={s.content}>
@@ -141,7 +138,6 @@ const DashboardScreen = ({ purchases, dispatches, payments, parties, mandis }) =
         </div>
       </div>
 
-      {/* RECENT ACTIVITIES - LAST 3 ENTRIES SECTION */}
       <div style={{ marginTop: 20 }}>
         <span style={{ ...s.label, fontSize: "14px", color: clr.accent }}>📋 Recent Activities (Last 3)</span>
         
@@ -176,7 +172,7 @@ const DashboardScreen = ({ purchases, dispatches, payments, parties, mandis }) =
   );
 };
 
-// ===== PURCHASE SCREEN WITH CLOSED/ACTIVE STATUS =====
+// ===== PURCHASE SCREEN =====
 const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, coldStorages }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -264,19 +260,19 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   );
 };
 
-// ===== DISPATCH LOGISTICS WITH POP-UP MESSAGE DETAIL =====
+// ===== DISPATCH LOGISTICS (UPDATED SUMMARY VALUES) =====
 const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varieties, gradings }) => {
   const [showForm, setShowForm] = useState(false);
   const [showPopModal, setShowPopModal] = useState(false);
   const [popData, setPopData] = useState(null);
-  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0 });
+  const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0, total_dispatch_weight: 0 });
   const [itemForm, setItemForm] = useState({ lot_number: "", purchase_bags: "", purchase_weight_kg: "" });
 
   const availableLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0);
 
   const addLotToTruck = () => {
     if (!itemForm.lot_number || !itemForm.purchase_bags || !itemForm.purchase_weight_kg) {
-      return alert("❌ Please fill Lot, Bags and Manual Weight!");
+      return alert("❌ Please fill Lot, Bags and Weight!");
     }
     
     const matchedPurchase = purchases.find(p => p.lot_id === itemForm.lot_number);
@@ -301,9 +297,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
       purchase_rate_per_kg: ratePerKg,
       purchase_lot_value: calculatedLotValue,
       variety_name: varieties.find(v => v.id === matchedPurchase.variety_id)?.name || "N/A",
-      grading_name: gradings.find(g => g.id === matchedPurchase.grading_id)?.name || "N/A",
-      mandi_arrived_weight_kg: 0,
-      mandi_sale_rate_per_kg: 0
+      grading_name: gradings.find(g => g.id === matchedPurchase.grading_id)?.name || "N/A"
     };
 
     setForm(p => {
@@ -311,7 +305,8 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
       return { 
         ...p, 
         lot_details: updatedDetails,
-        total_purchase_amount: updatedDetails.reduce((s, item) => s + item.purchase_lot_value, 0)
+        total_purchase_amount: updatedDetails.reduce((s, item) => s + item.purchase_lot_value, 0),
+        total_dispatch_weight: updatedDetails.reduce((s, item) => s + item.purchase_weight_kg, 0)
       };
     });
     
@@ -337,23 +332,36 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 14 }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>Dispatches (Truck Dispatch)</span>
-        <button onClick={() => { setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0 }); setShowForm(true); }} style={s.btn()}><Icon name="add" size={14} /> New Truck</button>
+        <button onClick={() => { setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0, total_dispatch_weight: 0 }); setShowForm(true); }} style={s.btn()}><Icon name="add" size={14} /> New Truck</button>
       </div>
 
-      {dispatches.map(d => (
-        <div key={d.id} style={s.card}>
-          <div style={s.rowBetween}><Badge v={`GP: ${d.gatepass_id}`} color={clr.blue} /><strong style={{color: clr.accent}}>{d.vehicle_number}</strong></div>
-          <div style={{ fontSize: 13, marginTop: 6, color: clr.muted }}>
-            To: <strong>{parties.find(p => p.id === d.destination_party_id)?.name || "N/A"}</strong> | Mandi: {mandis.find(m => m.id === d.mandi_id)?.name || "N/A"}
-          </div>
-          <div style={{ ...s.row, marginTop: 10 }}>
-            <button onClick={() => triggerPopMsg(d)} style={{ ...s.btnSm(clr.blue + "22", clr.blue), flex: 1 }}><Icon name="info" size={12} color={clr.blue} /> Dispatch Details Pop</button>
-            <button onClick={() => { if(window.confirm("Delete?")) opsD.deleteItem(d.id); }} style={{ ...s.btnSm(), color: clr.red }}><Icon name="trash" size={12} color={clr.red} /></button>
-          </div>
-        </div>
-      ))}
+      {dispatches.map(d => {
+        const totalBagsInTruck = d.lot_details?.reduce((acc, curr) => acc + (parseInt(curr.purchase_bags) || 0), 0) || 0;
+        const totalWeightInTruck = d.lot_details?.reduce((acc, curr) => acc + (parseFloat(curr.purchase_weight_kg) || 0), 0) || d.total_dispatch_weight || 0;
+        const totalValueInTruck = d.total_purchase_amount || 0;
 
-      {/* DISPATCH DETAILS SUMMARY POP-UP */}
+        return (
+          <div key={d.id} style={s.card}>
+            <div style={s.rowBetween}><Badge v={`GP: ${d.gatepass_id}`} color={clr.blue} /><strong style={{color: clr.accent}}>{d.vehicle_number}</strong></div>
+            <div style={{ fontSize: 13, marginTop: 6, color: clr.muted }}>
+              To: <strong>{parties.find(p => p.id === d.destination_party_id)?.name || "N/A"}</strong> | Mandi: {mandis.find(m => m.id === d.mandi_id)?.name || "N/A"}
+            </div>
+            
+            <div style={s.divider} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13, background: "#0001", padding: 6, borderRadius: 6 }}>
+              <div>Total Loaded Bags: <strong>{totalBagsInTruck}</strong></div>
+              <div>Total Dispatch Weight: <strong style={{ color: clr.blue }}>{totalWeightInTruck} kg</strong></div>
+              <div style={{ gridColumn: "1 / span 2" }}>Total Load Value: <strong style={{ color: clr.green }}>₹{fmt(totalValueInTruck)}</strong></div>
+            </div>
+
+            <div style={{ ...s.row, marginTop: 10 }}>
+              <button onClick={() => triggerPopMsg(d)} style={{ ...s.btnSm(clr.blue + "22", clr.blue), flex: 1 }}><Icon name="info" size={12} color={clr.blue} /> Dispatch Details Pop</button>
+              <button onClick={() => { if(window.confirm("Delete?")) opsD.deleteItem(d.id); }} style={{ ...s.btnSm(), color: clr.red }}><Icon name="trash" size={12} color={clr.red} /></button>
+            </div>
+          </div>
+        );
+      })}
+
       <Modal open={showPopModal} onClose={() => setShowPopModal(false)} title="📦 Loaded Dispatch Details Summary">
         {popData && (
           <div style={{ fontSize: "14px", lineHeight: "1.6" }}>
@@ -361,14 +369,20 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
             <div><strong>Vehicle Number:</strong> {popData.vehicle_number}</div>
             <div><strong>Party Destination:</strong> {parties.find(p => p.id === popData.destination_party_id)?.name || "N/A"}</div>
             <div><strong>Target Mandi:</strong> {mandis.find(m => m.id === popData.mandi_id)?.name || "N/A"}</div>
+            
+            <div style={{ background: clr.card2, padding: 8, borderRadius: 6, marginTop: 8, fontSize: "13px" }}>
+              <div><strong>📦 Total Dispatch Weight:</strong> {popData.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0) || popData.total_dispatch_weight} kg</div>
+              <div><strong>💰 Total Loaded Value:</strong> ₹{fmt(popData.total_purchase_amount)}</div>
+            </div>
+
             <div style={s.divider} />
             <div style={{ fontWeight: 700, color: clr.accent, marginBottom: 6 }}>LOTS LOADED IN TRUCK:</div>
             {popData.lot_details?.map((l, i) => (
               <div key={i} style={{ background: clr.card2, padding: 8, borderRadius: 6, marginBottom: 6, fontSize: "13px" }}>
                 <div>• <strong>Lot ID:</strong> {l.lot_number}</div>
                 <div>• <strong>Variety:</strong> {l.variety_name || "N/A"} | <strong>Grading:</strong> {l.grading_name || "N/A"}</div>
-                <div>• <strong>Bags Tally Count:</strong> {l.purchase_bags} Bags</div>
-                <div>• <strong>Actual Weight:</strong> {l.purchase_weight_kg} kg</div>
+                <div>• <strong>Bags Count:</strong> {l.purchase_bags} Bags</div>
+                <div>• <strong>Weight:</strong> {l.purchase_weight_kg} kg</div>
               </div>
             ))}
             <div style={s.divider} />
@@ -386,9 +400,9 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
         <div style={{ ...s.card2, background: clr.card, padding: 10, marginBottom: 12 }}>
           <div style={s.label}>🚚 Load Multiple Lots into Truck</div>
           <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_number} onChange={e => setItemForm({ ...itemForm, lot_number: e.target.value })}><option value="">Select Available Lot</option>{availableLots.map(l => <option key={l.id} value={l.lot_id}>{l.lot_id}</option>)}</select>
-          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Bags Count (Only Tally Count)" value={itemForm.purchase_bags} onChange={e => setItemForm({ ...itemForm, purchase_bags: e.target.value })} />
-          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Enter Actual Weight (kg)" value={itemForm.purchase_weight_kg} onChange={e => setItemForm({ ...itemForm, purchase_weight_kg: e.target.value })} />
-          <button onClick={addLotToTruck} style={{ ...s.btnSm(clr.accent, "#000"), width: "100%" }}>+ Fetch Value & Add Lot</button>
+          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Bags Count" value={itemForm.purchase_bags} onChange={e => setItemForm({ ...itemForm, purchase_bags: e.target.value })} />
+          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Enter Weight (kg)" value={itemForm.purchase_weight_kg} onChange={e => setItemForm({ ...itemForm, purchase_weight_kg: e.target.value })} />
+          <button onClick={addLotToTruck} style={{ ...s.btnSm(clr.accent, "#000"), width: "100%" }}>+ Add Lot & Calculate Value</button>
         </div>
 
         {form.lot_details.length > 0 && (
@@ -408,68 +422,34 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
   );
 };
 
-// ===== MANDI SALE SCREEN =====
+// ===== MANDI SALE SCREEN (SIMPLE MODEL - WEIGHT AND TOTAL SALE PRICE) =====
 const SaleScreen = ({ dispatches, opsD }) => {
   const [showForm, setShowForm] = useState(false);
   const [selectedDispatchId, setSelectedDispatchId] = useState("");
-  const [form, setForm] = useState({ id: "", gatepass_id: "", lot_details: [], transport: "", commission_percent: "", hamali_per_bag: "", other_expenses: "" });
+  const [form, setForm] = useState({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "" });
 
   const loadDispatchData = (dispatchId) => {
     setSelectedDispatchId(dispatchId);
     const targetDispatch = dispatches.find(d => d.id === dispatchId);
     if (targetDispatch) {
+      const dispatchWeight = targetDispatch.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0) || targetDispatch.total_dispatch_weight || 0;
       setForm({
         id: targetDispatch.id,
         gatepass_id: targetDispatch.gatepass_id,
-        lot_details: targetDispatch.lot_details || [],
-        transport: "", commission_percent: "", hamali_per_bag: "", other_expenses: ""
+        total_mandi_weight_received: dispatchWeight, 
+        total_mandi_sale_amount: ""
       });
     }
   };
 
-  const updateLotMandiMetrics = (idx, field, value) => {
-    const updatedDetails = [...form.lot_details];
-    updatedDetails[idx] = { ...updatedDetails[idx], [field]: parseFloat(value) || 0 };
-    setForm(prev => ({ ...prev, lot_details: updatedDetails }));
-  };
-
   const saveMandiInvoice = async () => {
-    if (!form.gatepass_id || form.lot_details.length === 0) return alert("❌ Setup transaction completely!");
-    
-    const transportCost = parseFloat(form.transport) || 0;
-    const commissionPct = parseFloat(form.commission_percent) || 0;
-    const hamaliRate = parseFloat(form.hamali_per_bag) || 0;
-    const otherCost = parseFloat(form.other_expenses) || 0;
-
-    const processedLots = form.lot_details.map(l => {
-      const grossSaleVal = (l.mandi_arrived_weight_kg || 0) * (l.mandi_sale_rate_per_kg || 0);
-      const wtLoss = Math.max(0, (l.purchase_weight_kg || 0) - (l.mandi_arrived_weight_kg || 0));
-      return {
-        ...l,
-        lot_gross_sale_value: grossSaleVal,
-        weight_loss_kg: wtLoss,
-        weight_loss_amount: wtLoss * (l.purchase_rate_per_kg || 0),
-        lot_net_profit_loss: grossSaleVal - (l.purchase_lot_value || 0)
-      };
-    });
-
-    const totalGrossRevenue = processedLots.reduce((sum, l) => sum + l.lot_gross_sale_value, 0);
-    const totalHamali = processedLots.reduce((sum, l) => sum + ((l.purchase_bags || 0) * hamaliRate), 0);
-    const totalCommission = totalGrossRevenue * (commissionPct / 100);
-
-    const consolidatedExpenses = transportCost + totalCommission + totalHamali + otherCost;
-    const originalDispatch = dispatches.find(d => d.id === form.id);
-    const totalPurchaseCost = originalDispatch ? (parseFloat(originalDispatch.total_purchase_amount) || 0) : 0;
+    if (!form.gatepass_id || !form.total_mandi_sale_amount || !form.total_mandi_weight_received) {
+      return alert("❌ Please fill Mandi Weight and Total Sale Amount!");
+    }
 
     const finalPayload = {
-      lot_details: processedLots,
-      transport: transportCost,
-      commission_percent: commissionPct,
-      hamali_per_bag: hamaliRate,
-      other_expenses: otherCost,
-      total_mandi_sale_amount: totalGrossRevenue,
-      total_expenses: consolidatedExpenses,
-      net_gp_profit_loss: totalGrossRevenue - totalPurchaseCost - consolidatedExpenses
+      total_mandi_weight_received: parseFloat(form.total_mandi_weight_received) || 0,
+      total_mandi_sale_amount: parseFloat(form.total_mandi_sale_amount) || 0
     };
 
     const success = await opsD.editItem(form.id, finalPayload);
@@ -480,35 +460,37 @@ const SaleScreen = ({ dispatches, opsD }) => {
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 14 }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>Mandi Sales Book</span>
-        <button onClick={() => { setSelectedDispatchId(""); setForm({ id: "", gatepass_id: "", lot_details: [], transport: "", commission_percent: "", hamali_per_bag: "", other_expenses: "" }); setShowForm(true); }} style={s.btn(clr.green, "#fff")}>New Mandi Sale Entry</button>
+        <button onClick={() => { setSelectedDispatchId(""); setForm({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "" }); setShowForm(true); }} style={s.btn(clr.green, "#fff")}>New Mandi Sale Entry</button>
       </div>
 
       {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(sx => (
         <div key={sx.id} style={s.card}>
           <div style={s.rowBetween}><Badge v={`GP Link: ${sx.gatepass_id}`} color={clr.green} /><strong>₹{fmt(sx.total_mandi_sale_amount)}</strong></div>
-          <div style={{ fontSize: 13, color: clr.muted, marginTop: 4 }}>Total Expenses Cut: ₹{fmt(sx.total_expenses)}</div>
+          <div style={{ fontSize: 13, color: clr.muted, marginTop: 4 }}>
+            Mandi Received Weight: <strong>{sx.total_mandi_weight_received || sx.total_dispatch_weight} kg</strong>
+          </div>
         </div>
       ))}
 
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Record Mandi Sale Metrics">
-        <Field label="Select Target Gatepass Track"><select style={s.select} value={selectedDispatchId} onChange={e => loadDispatchData(e.target.value)}><option value="">Select Dispatched GP</option>{dispatches.filter(d => !d.total_mandi_sale_amount || d.total_mandi_sale_amount === 0).map(d => <option key={d.id} value={d.id}>{d.gatepass_id} ({d.vehicle_number})</option>)}</select></Field>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Record Simple Mandi Sale">
+        <Field label="Select Target Gatepass Track">
+          <select style={s.select} value={selectedDispatchId} onChange={e => loadDispatchData(e.target.value)}>
+            <option value="">Select Dispatched GP</option>
+            {dispatches.filter(d => !d.total_mandi_sale_amount || d.total_mandi_sale_amount === 0).map(d => (
+              <option key={d.id} value={d.id}>{d.gatepass_id} ({d.vehicle_number})</option>
+            ))}
+          </select>
+        </Field>
         
-        {form.lot_details.map((item, idx) => (
-          <div key={idx} style={{ ...s.card2, border: `1px solid ${clr.accent}` }}>
-            <div style={{ fontWeight: 700, marginBottom: 6, color: clr.accent }}>Lot: {item.lot_number} ({item.purchase_bags} Bags Loaded)</div>
-            <Field label="Received Mandi Weight (kg)"><input type="number" style={s.input} placeholder="Mandi Me Arrived Weight" onChange={e => updateLotMandiMetrics(idx, "mandi_arrived_weight_kg", e.target.value)} /></Field>
-            <Field label="Sale Rate (₹ per kg)"><input type="number" step="0.01" style={s.input} placeholder="Bikri Rate Rs/Kg" onChange={e => updateLotMandiMetrics(idx, "mandi_sale_rate_per_kg", e.target.value)} /></Field>
-          </div>
-        ))}
-        
-        {form.lot_details.length > 0 && (
+        {form.gatepass_id && (
           <>
-            <div style={s.divider} />
-            <Field label="Transport Expenses (₹)"><input type="number" style={s.input} value={form.transport} onChange={e => setForm({ ...form, transport: e.target.value })} /></Field>
-            <Field label="Mandi Commission Percent (%)"><input type="number" placeholder="e.g. 6" style={s.input} value={form.commission_percent} onChange={e => setForm({ ...form, commission_percent: e.target.value })} /></Field>
-            <Field label="Hamali Fee Per Bag (₹)"><input type="number" style={s.input} value={form.hamali_per_bag} onChange={e => setForm({ ...form, hamali_per_bag: e.target.value })} /></Field>
-            <Field label="Other Expenses (₹)"><input type="number" style={s.input} value={form.other_expenses} onChange={e => setForm({ ...form, other_expenses: e.target.value })} /></Field>
-            <button onClick={saveMandiInvoice} style={{ ...s.btn(clr.green, "#fff"), marginTop: 12 }}>Calculate & Process Final Split</button>
+            <Field label="Total Mandi Received Weight (kg)">
+              <input type="number" style={s.input} placeholder="Enter total weight arrived at mandi" value={form.total_mandi_weight_received} onChange={e => setForm({ ...form, total_mandi_weight_received: e.target.value })} />
+            </Field>
+            <Field label="Total Sale Amount (₹)">
+              <input type="number" style={s.input} placeholder="Maal Kitne Ka Bika (Total Amount)" value={form.total_mandi_sale_amount} onChange={e => setForm({ ...form, total_mandi_sale_amount: e.target.value })} />
+            </Field>
+            <button onClick={saveMandiInvoice} style={{ ...s.btn(clr.green, "#fff"), marginTop: 12 }}>Save Mandi Sale</button>
           </>
         )}
       </Modal>
@@ -583,7 +565,7 @@ const ColdStorageDueScreen = ({ purchases, coldStorages }) => {
   );
 };
 
-// ===== DETAILED PROFIT REALIZATION REPORT =====
+// ===== PROFIT REALIZATION REPORT =====
 const PnLScreen = ({ dispatches, parties, mandis }) => {
   return (
     <div style={s.content}>
@@ -601,25 +583,11 @@ const PnLScreen = ({ dispatches, parties, mandis }) => {
             <div style={{ fontSize: 13, color: clr.muted, marginTop: 4 }}>Party Reference: <strong>{partyName}</strong></div>
             <div style={s.divider} />
 
-            {sale.lot_details?.map((ls, idx) => {
-              const netLotProfit = parseFloat(ls.lot_net_profit_loss) || 0;
-              return (
-                <div key={idx} style={{ ...s.card2, background: "#0002", padding: 10, fontSize: 13 }}>
-                  <div style={{ ...s.rowBetween, fontWeight: 700, color: clr.accent }}>
-                    <span>Lot: {ls.lot_number} ({ls.purchase_bags} Bags)</span>
-                    <span style={{ color: netLotProfit >= 0 ? clr.green : clr.red }}>Lot P&L: ₹{fmt(netLotProfit)}</span>
-                  </div>
-                </div>
-              );
-            })}
-
-            <div style={s.divider} />
             <div style={{ fontSize: 13, background: clr.card2, padding: 8, borderRadius: 8 }}>
               <div>Stock Purchase Cost: <strong>₹{fmt(sale.total_purchase_amount)}</strong></div>
               <div>Gross Sale Revenue: <strong style={{ color: clr.green }}>₹{fmt(sale.total_mandi_sale_amount)}</strong></div>
-              <div>Combined Expenses (Total): <strong style={{ color: clr.orange }}>₹{fmt(sale.total_expenses)}</strong></div>
               <div style={{ borderTop: `1px solid ${clr.border}`, paddingTop: 6, marginTop: 6 }}>
-                Net Net GP Margin: <strong style={{ fontSize: 15, color: (sale.net_gp_profit_loss || 0) >= 0 ? clr.green : clr.red }}>₹{fmt(sale.net_gp_profit_loss)}</strong>
+                Net Net GP Margin: <strong style={{ fontSize: 15, color: (sale.total_mandi_sale_amount - sale.total_purchase_amount) >= 0 ? clr.green : clr.red }}>₹{fmt(sale.total_mandi_sale_amount - sale.total_purchase_amount)}</strong>
               </div>
             </div>
           </div>
@@ -680,17 +648,17 @@ export default function App() {
   return (
     <div style={s.screen}>
       <div style={s.header}>
-        <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 AlooTrader v5.0</span>
+        <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 AlooTrader v5.1</span>
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
-      {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} payments={payments.data} parties={parties.data} mandis={mandis.data} />}
+      {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} payments={payments.data} mandis={mandis.data} />}
       {activeTab === "purchase" && <PurchaseScreen purchases={purchases.data} dispatches={dispatches.data} opsP={purchases} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
       {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} varieties={varieties.data} gradings={gradings.data} />}
-      {activeTab === "sale" && <SaleScreen sales={[]} dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} />}
+      {activeTab === "sale" && <SaleScreen dispatches={dispatches.data} opsD={dispatches} />}
       {activeTab === "payment" && <PaymentScreen dispatches={dispatches.data} purchases={purchases.data} payments={payments.data} opsPayment={payments} parties={parties.data} />}
       {activeTab === "colddue" && <ColdStorageDueScreen purchases={purchases.data} coldStorages={coldStorages.data} />}
-      {activeTab === "pnl" && <PnLScreen dispatches={dispatches.data} purchases={purchases.data} parties={parties.data} mandis={mandis.data} />}
+      {activeTab === "pnl" && <PnLScreen dispatches={dispatches.data} parties={parties.data} mandis={mandis.data} />}
       {activeTab === "master" && <MasterScreen varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} mandis={mandis.data} parties={parties.data} opsV={varieties} opsG={gradings} opsCS={coldStorages} opsM={mandis} opsPA={parties} />}
 
       <div style={s.navBar}>
