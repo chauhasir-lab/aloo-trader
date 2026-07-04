@@ -233,7 +233,7 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   );
 };
 
-// ===== DISPATCH LOGISTICS (FIXED LOGIC FOR STRICT MANUAL WEIGHT BASE VALUE) =====
+// ===== DISPATCH LOGISTICS =====
 const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStorages }) => {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0 });
@@ -250,24 +250,23 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
     if (!matchedPurchase) return alert("❌ Lot Selection Missing!");
     
     const remaining = getRemainingBags(matchedPurchase, dispatches);
-    const bagsToLoad = parseInt(itemForm.purchase_bags); // Keval counting ke liye hai
-    const manualWeight = parseFloat(itemForm.purchase_weight_kg); // Core input for cost calculations
+    const bagsToLoad = parseInt(itemForm.purchase_bags); 
+    const manualWeight = parseFloat(itemForm.purchase_weight_kg); 
 
     if (bagsToLoad > remaining) return alert(`Only ${remaining} bags available in this lot!`);
     
-    // Core Logic Fix: Std bags are derived from manual weight, manual_bags is just for show/counting
     const stdBagsCalculated = manualWeight / 52.5; 
     const originalRatePerBag = parseFloat(matchedPurchase.rate_per_bag) || 0;
-    const calculatedLotValue = stdBagsCalculated * originalRatePerBag; // Strict weight based calculation
+    const calculatedLotValue = stdBagsCalculated * originalRatePerBag; 
 
     const ratePerKg = originalRatePerBag / 52.5;
 
     const newLot = {
       lot_number: itemForm.lot_number,
-      purchase_bags: bagsToLoad, // Saved strictly for visual counting/stock tally
+      purchase_bags: bagsToLoad, 
       purchase_weight_kg: manualWeight,
       purchase_rate_per_kg: ratePerKg,
-      purchase_lot_value: calculatedLotValue, // True purchase cost derived from weight split
+      purchase_lot_value: calculatedLotValue, 
       mandi_arrived_weight_kg: 0,
       mandi_sale_rate_per_kg: 0
     };
@@ -349,7 +348,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, coldStor
   );
 };
 
-// ===== MANDI SALE SCREEN =====
+// ===== MANDI SALE SCREEN (INTEGRATED INTERNAL LOGIC PROCESSING) =====
 const SaleScreen = ({ sales, dispatches, opsD }) => {
   const [showForm, setShowForm] = useState(false);
   const [selectedDispatchId, setSelectedDispatchId] = useState("");
@@ -382,16 +381,43 @@ const SaleScreen = ({ sales, dispatches, opsD }) => {
     const hamaliRate = parseFloat(form.hamali_per_bag) || 0;
     const otherCost = parseFloat(form.other_expenses) || 0;
 
-    const totalGrossRevenue = form.lot_details.reduce((sum, l) => sum + ((l.mandi_arrived_weight_kg || 0) * (l.mandi_sale_rate_per_kg || 0)), 0);
-    const totalHamali = form.lot_details.reduce((sum, l) => sum + ((l.purchase_bags || 0) * hamaliRate), 0);
+    // 1. Calculate Gross Mandi Sale Revenue & Weight Metrics for Each Lot
+    const processedLots = form.lot_details.map(l => {
+      const grossSaleVal = (l.mandi_arrived_weight_kg || 0) * (l.mandi_sale_rate_per_kg || 0);
+      const wtLoss = Math.max(0, (l.purchase_weight_kg || 0) - (l.mandi_arrived_weight_kg || 0));
+      const wtLossAmt = wtLoss * (l.purchase_rate_per_kg || 0);
+      
+      // Dynamic Lot-wise Allocation metrics for P&L Screen usage
+      return {
+        ...l,
+        lot_gross_sale_value: grossSaleVal,
+        weight_loss_kg: wtLoss,
+        weight_loss_amount: wtLossAmt,
+        lot_net_profit_loss: grossSaleVal - (l.purchase_lot_value || 0)
+      };
+    });
+
+    const totalGrossRevenue = processedLots.reduce((sum, l) => sum + l.lot_gross_sale_value, 0);
+    const totalHamali = processedLots.reduce((sum, l) => sum + ((l.purchase_bags || 0) * hamaliRate), 0);
     const totalCommission = totalGrossRevenue * (commissionPct / 100);
 
+    // 2. Final Consolidated Expenses
     const consolidatedExpenses = transportCost + totalCommission + totalHamali + otherCost;
 
+    // 3. Find target dispatch purchase amount to deduce net structural P&L
+    const originalDispatch = dispatches.find(d => d.id === form.id);
+    const totalPurchaseCost = originalDispatch ? (parseFloat(originalDispatch.total_purchase_amount) || 0) : 0;
+    const netReturnVal = totalGrossRevenue - totalPurchaseCost - consolidatedExpenses;
+
     const finalPayload = {
-      ...form,
+      lot_details: processedLots,
+      transport: transportCost,
+      commission_percent: commissionPct,
+      hamali_per_bag: hamaliRate,
+      other_expenses: otherCost,
+      total_mandi_sale_amount: totalGrossRevenue,
       total_expenses: consolidatedExpenses,
-      lot_details: form.lot_details 
+      net_gp_profit_loss: netReturnVal
     };
 
     const success = await opsD.editItem(form.id, finalPayload);
@@ -409,7 +435,7 @@ const SaleScreen = ({ sales, dispatches, opsD }) => {
         <div key={sx.id} style={s.card}>
           <div style={s.rowBetween}><Badge v={`GP Link: ${sx.gatepass_id}`} color={clr.green} /><strong>₹{fmt(sx.total_mandi_sale_amount)}</strong></div>
           <div style={{ fontSize: 13, color: clr.muted, marginTop: 4 }}>Total Expenses Cut: ₹{fmt(sx.total_expenses)}</div>
-          <div style={{ fontSize: 13, color: clr.orange }}>Net Result: ₹{fmt(sx.net_gp_profit_loss)}</div>
+          <div style={{ fontSize: 13, color: sx.net_gp_profit_loss >= 0 ? clr.green : clr.red }}>Net Result: ₹{fmt(sx.net_gp_profit_loss)}</div>
         </div>
       ))}
 
