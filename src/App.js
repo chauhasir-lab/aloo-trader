@@ -104,11 +104,10 @@ const Icon = ({ name, size = 18, color = clr.text }) => {
 const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div style={s.label}>{label}</div>{children}</div>;
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 14, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
 
-// ===== DASHBOARD SCREEN (ADDED LIVE P&L CARD) =====
+// ===== DASHBOARD SCREEN =====
 const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
   const totalBagsPurchased = purchases.reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
   const totalBagsRemaining = purchases.reduce((sum, p) => sum + getRemainingBags(p, dispatches), 0);
-
   const activeLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0).length;
   const closedLots = purchases.filter(p => getRemainingBags(p, dispatches) <= 0).length;
 
@@ -116,7 +115,6 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
   const totalPaymentsReceived = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
   const pendingDue = totalSaleValue - totalPaymentsReceived;
 
-  // Realized Profit & Loss Logic for Dashboard
   const soldDispatches = dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0);
   const totalSoldPurchaseCost = soldDispatches.reduce((sum, d) => sum + (d.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0) || 0), 0);
   const totalMandiRevenue = soldDispatches.reduce((sum, d) => sum + (parseFloat(d.total_mandi_sale_amount) || 0), 0);
@@ -124,7 +122,6 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
 
   return (
     <div style={s.content}>
-      {/* 📈 REALIZED PROFIT & LOSS DASHBOARD CARD */}
       <div style={{ ...s.card, background: dynamicNetProfit >= 0 ? clr.green + "1a" : clr.red + "1a", borderColor: dynamicNetProfit >= 0 ? clr.green : clr.red, marginBottom: 14 }}>
         <div style={s.rowBetween}>
           <span style={{ ...s.label, fontSize: "13px", color: dynamicNetProfit >= 0 ? clr.green : clr.red }}>📊 Realized Profit & Loss (Live)</span>
@@ -254,7 +251,7 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   );
 };
 
-// ===== DISPATCH LOGISTICS (LOADED VALUE LOGIC INSTALLED) =====
+// ===== DISPATCH LOGISTICS =====
 const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varieties, gradings }) => {
   const [showForm, setShowForm] = useState(false);
   const [showPopModal, setShowPopModal] = useState(false);
@@ -268,7 +265,6 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
     if (!itemForm.lot_number || !itemForm.purchase_bags || !itemForm.purchase_weight_kg) {
       return alert("❌ Please fill Lot, Bags and Weight!");
     }
-    
     const matchedPurchase = purchases.find(p => p.lot_id === itemForm.lot_number);
     if (!matchedPurchase) return alert("❌ Lot Selection Missing!");
     
@@ -281,7 +277,6 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
     const stdBagsCalculated = manualWeight / 52.5; 
     const originalRatePerBag = parseFloat(matchedPurchase.rate_per_bag) || 0;
     const calculatedLotValue = stdBagsCalculated * originalRatePerBag; 
-
     const ratePerKg = originalRatePerBag / 52.5;
 
     const newLot = {
@@ -303,31 +298,21 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
         total_dispatch_weight: updatedDetails.reduce((s, item) => s + item.purchase_weight_kg, 0)
       };
     });
-    
     setItemForm({ lot_number: "", purchase_bags: "", purchase_weight_kg: "" });
   };
 
-  const triggerPopMsg = (dispatchObj) => {
-    setPopData(dispatchObj);
-    setShowPopModal(true);
-  };
+  const triggerPopMsg = (dispatchObj) => { setPopData(dispatchObj); setShowPopModal(true); };
 
   const save = async () => {
     if (!form.gatepass_id || !form.destination_party_id || !form.mandi_id || form.lot_details.length === 0) {
       return alert("❌ Complete the form with at least 1 Lot!");
     }
-    
     const { total_purchase_amount, total_dispatch_weight, ...cleanPayload } = form;
     const storedObj = { ...cleanPayload, id: uid() };
     const result = await opsD.addItem(storedObj);
-    
     if (result) {
       setShowForm(false);
-      triggerPopMsg({
-        ...storedObj,
-        total_purchase_amount: form.total_purchase_amount,
-        total_dispatch_weight: form.total_dispatch_weight
-      });
+      triggerPopMsg({ ...storedObj, total_purchase_amount: form.total_purchase_amount, total_dispatch_weight: form.total_dispatch_weight });
     }
   };
 
@@ -349,9 +334,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
             <div style={{ fontSize: 13, marginTop: 6, color: clr.muted }}>
               To: <strong>{parties.find(p => p.id === d.destination_party_id)?.name || "N/A"}</strong> | Mandi: {mandis.find(m => m.id === d.mandi_id)?.name || "N/A"}
             </div>
-            
             <div style={s.divider} />
-            {/* 🚚 REAL-TIME VALUE DISPLAY PANEL */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13, background: clr.accent + "0b", padding: 10, borderRadius: 8, border: `1px dashed ${clr.border}` }}>
               <div>Loaded Bags: <strong>{totalBagsInTruck} Bags</strong></div>
               <div>Dispatch Wt: <strong>{totalWeightInTruck} kg</strong></div>
@@ -359,7 +342,6 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
                 Loaded Cost Value: <strong style={{ color: clr.accent, fontSize: "14px" }}>₹{fmt(totalValueInTruck)}</strong>
               </div>
             </div>
-
             <div style={{ ...s.row, marginTop: 10 }}>
               <button onClick={() => triggerPopMsg({ ...d, total_purchase_amount: totalValueInTruck, total_dispatch_weight: totalWeightInTruck })} style={{ ...s.btnSm(clr.blue + "22", clr.blue), flex: 1 }}><Icon name="info" size={12} color={clr.blue} /> View Details Summary</button>
               <button onClick={() => { if(window.confirm("Delete?")) opsD.deleteItem(d.id); }} style={{ ...s.btnSm(), color: clr.red }}><Icon name="trash" size={12} color={clr.red} /></button>
@@ -375,12 +357,10 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
             <div><strong>Vehicle Number:</strong> {popData.vehicle_number}</div>
             <div><strong>Party Destination:</strong> {parties.find(p => p.id === popData.destination_party_id)?.name || "N/A"}</div>
             <div><strong>Target Mandi:</strong> {mandis.find(m => m.id === popData.mandi_id)?.name || "N/A"}</div>
-            
             <div style={{ background: clr.card2, padding: 8, borderRadius: 6, marginTop: 8, fontSize: "13px" }}>
               <div><strong>📦 Total Dispatch Weight:</strong> {popData.total_dispatch_weight || popData.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0)} kg</div>
               <div><strong>💰 Total Loaded Value:</strong> <span style={{ color: clr.accent, fontWeight: 700 }}>₹{fmt(popData.total_purchase_amount || popData.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0))}</span></div>
             </div>
-
             <div style={s.divider} />
             <div style={{ fontWeight: 700, color: clr.accent, marginBottom: 6 }}>LOTS LOADED IN TRUCK:</div>
             {popData.lot_details?.map((l, i) => (
@@ -402,7 +382,6 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
         <Field label="Vehicle Number"><input style={s.input} value={form.vehicle_number} onChange={e => setForm({ ...form, vehicle_number: e.target.value })} /></Field>
         <Field label="Destination Party"><select style={s.select} value={form.destination_party_id} onChange={e => setForm({ ...form, destination_party_id: e.target.value })}><option value="">Select Party</option>{parties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
         <Field label="Target Mandi"><select style={s.select} value={form.mandi_id} onChange={e => setForm({ ...form, mandi_id: e.target.value })}><option value="">Select Mandi</option>{mandis.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
-        
         <div style={{ ...s.card2, background: clr.card, padding: 10, marginBottom: 12 }}>
           <div style={s.label}>🚚 Load Multiple Lots into Truck</div>
           <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_number} onChange={e => setItemForm({ ...itemForm, lot_number: e.target.value })}><option value="">Select Available Lot</option>{availableLots.map(l => <option key={l.id} value={l.lot_id}>{l.lot_id}</option>)}</select>
@@ -410,28 +389,24 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
           <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Enter Weight (kg)" value={itemForm.purchase_weight_kg} onChange={e => setItemForm({ ...itemForm, purchase_weight_kg: e.target.value })} />
           <button onClick={addLotToTruck} style={{ ...s.btnSm(clr.accent, "#000"), width: "100%" }}>+ Add Lot & Calculate Value</button>
         </div>
-
         {form.lot_details.length > 0 && (
           <div style={{ marginBottom: 10, fontSize: 13, background: clr.card2, padding: 10, borderRadius: 8 }}>
             <strong>Selected Lots Queue:</strong>
             {form.lot_details.map((l, i) => (
-              <div key={i} style={{ color: clr.green, marginTop: 4 }}>
-                • Lot {l.lot_number} — {l.purchase_bags} Bags ({l.purchase_weight_kg} kg)
-              </div>
+              <div key={i} style={{ color: clr.green, marginTop: 4 }}>• Lot {l.lot_number} — {l.purchase_bags} Bags ({l.purchase_weight_kg} kg)</div>
             ))}
             <div style={{ borderTop: `1px dashed ${clr.border}`, marginTop: 6, paddingTop: 6, color: clr.accent }}>
               Current Running Load Value: <strong>₹{fmt(form.total_purchase_amount)}</strong>
             </div>
           </div>
         )}
-
         <button onClick={save} style={{ ...s.btn() }}>Submit Dispatches</button>
       </Modal>
     </div>
   );
 };
 
-// ===== MANDI SALE SCREEN (LOADED VALUE RELATION COMPLETED) =====
+// ===== MANDI SALE SCREEN =====
 const SaleScreen = ({ dispatches, opsD }) => {
   const [showForm, setShowForm] = useState(false);
   const [selectedDispatchId, setSelectedDispatchId] = useState("");
@@ -444,11 +419,8 @@ const SaleScreen = ({ dispatches, opsD }) => {
       const dispatchWeight = targetDispatch.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0) || 0;
       const dispatchCostValue = targetDispatch.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0) || 0;
       setForm({
-        id: targetDispatch.id,
-        gatepass_id: targetDispatch.gatepass_id,
-        total_mandi_weight_received: dispatchWeight, 
-        total_mandi_sale_amount: "",
-        original_load_value: dispatchCostValue
+        id: targetDispatch.id, gatepass_id: targetDispatch.gatepass_id,
+        total_mandi_weight_received: dispatchWeight, total_mandi_sale_amount: "", original_load_value: dispatchCostValue
       });
     }
   };
@@ -457,12 +429,10 @@ const SaleScreen = ({ dispatches, opsD }) => {
     if (!form.gatepass_id || !form.total_mandi_sale_amount || !form.total_mandi_weight_received) {
       return alert("❌ Please fill Mandi Weight and Total Sale Amount!");
     }
-
     const finalPayload = {
       total_mandi_weight_received: parseFloat(form.total_mandi_weight_received) || 0,
       total_mandi_sale_amount: parseFloat(form.total_mandi_sale_amount) || 0
     };
-
     const success = await opsD.editItem(form.id, finalPayload);
     if (success) { setShowForm(false); setSelectedDispatchId(""); }
   };
@@ -481,7 +451,6 @@ const SaleScreen = ({ dispatches, opsD }) => {
             <div style={s.rowBetween}><Badge v={`GP Link: ${sx.gatepass_id}`} color={clr.green} /><strong>Sale: ₹{fmt(sx.total_mandi_sale_amount)}</strong></div>
             <div style={{ fontSize: 13, color: clr.muted, marginTop: 6, background: "#0001", padding: 6, borderRadius: 6 }}>
               <div>Mandi Wt Received: <strong>{sx.total_mandi_weight_received} kg</strong></div>
-              {/* 💸 SHOWS WHAT VALUE WAS ORIGINALLY LOADED DURING DISPATCH */}
               <div style={{ marginTop: 2, color: clr.accent }}>Original Truck Loaded Value: <strong>₹{fmt(loadedValue)}</strong></div>
             </div>
           </div>
@@ -489,27 +458,22 @@ const SaleScreen = ({ dispatches, opsD }) => {
       })}
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Record Simple Mandi Sale">
-        <Field label="Select Target Gatepass Track">
-          <select style={s.select} value={selectedDispatchId} onChange={e => loadDispatchData(e.target.value)}>
-            <option value="">Select Dispatched GP</option>
-            {dispatches.filter(d => !d.total_mandi_sale_amount || d.total_mandi_sale_amount === 0).map(d => (
-              <option key={d.id} value={d.id}>{d.gatepass_id} ({d.vehicle_number})</option>
-            ))}
-          </select>
-        </Field>
-        
+        <select style={s.select} value={selectedDispatchId} onChange={e => loadDispatchData(e.target.value)}>
+          <option value="">Select Dispatched GP</option>
+          {dispatches.filter(d => !d.total_mandi_sale_amount || d.total_mandi_sale_amount === 0).map(d => (
+            <option key={d.id} value={d.id}>{d.gatepass_id} ({d.vehicle_number})</option>
+          ))}
+        </select>
         {form.gatepass_id && (
           <>
-            {/* 💡 LIVE CONSOLE FOR TRADING AGENT TO KEEP EYE ON PURHCASE VALUE */}
-            <div style={{ background: clr.card2, padding: 10, borderRadius: 8, marginBottom: 12, fontSize: "13px", borderLeft: `3px solid ${clr.accent}` }}>
-              ⚠️ **Truck History Monitor:** Is vehicle mein total **₹{fmt(form.original_load_value)}** ki cost ka maal load kiya gaya tha. Iske upar hi boli sale register karein.
+            <div style={{ background: clr.card2, padding: 10, borderRadius: 8, margin: "12px 0", fontSize: "13px", borderLeft: `3px solid ${clr.accent}` }}>
+              ⚠️ **Truck History Monitor:** Is vehicle mein total **₹{fmt(form.original_load_value)}** ki cost ka maal load kiya gaya tha.
             </div>
-
             <Field label="Total Mandi Received Weight (kg)">
-              <input type="number" style={s.input} placeholder="Enter total weight arrived at mandi" value={form.total_mandi_weight_received} onChange={e => setForm({ ...form, total_mandi_weight_received: e.target.value })} />
+              <input type="number" style={s.input} value={form.total_mandi_weight_received} onChange={e => setForm({ ...form, total_mandi_weight_received: e.target.value })} />
             </Field>
             <Field label="Total Sale Amount (₹)">
-              <input type="number" style={s.input} placeholder="Maal Kitne Ka Bika (Total Amount)" value={form.total_mandi_sale_amount} onChange={e => setForm({ ...form, total_mandi_sale_amount: e.target.value })} />
+              <input type="number" style={s.input} value={form.total_mandi_sale_amount} onChange={e => setForm({ ...form, total_mandi_sale_amount: e.target.value })} />
             </Field>
             <button onClick={saveMandiInvoice} style={{ ...s.btn(clr.green, "#fff"), marginTop: 12 }}>Save Mandi Sale</button>
           </>
@@ -519,7 +483,7 @@ const SaleScreen = ({ dispatches, opsD }) => {
   );
 };
 
-// ===== FINANCIAL PAYMENTS MANAGEMENT =====
+// ===== FINANCIAL PAYMENTS (UPDATED WITH GATEPASS PAYMENT HISTORY) =====
 const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ gatepass_id: "", amount: "", payment_mode: "cash", date: today(), notes: "" });
@@ -530,58 +494,141 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
     setShowForm(false);
   };
 
-  const partyDues = parties.map(p => {
+  const partySummary = parties.map(p => {
     const dispatchesToParty = dispatches.filter(d => d.destination_party_id === p.id);
     const totalSale = dispatchesToParty.reduce((sum, d) => sum + (parseFloat(d.total_mandi_sale_amount) || 0), 0);
     const gpsToParty = dispatchesToParty.map(d => d.gatepass_id);
     const paidAmount = payments.filter(py => gpsToParty.includes(py.gatepass_id)).reduce((sum, py) => sum + (parseFloat(py.amount) || 0), 0);
-    return { id: p.id, name: p.name, due: totalSale - paidAmount };
-  }).filter(p => p.due > 0);
+    
+    // Gatepass level history breakdown for this party
+    const gpBreakdown = dispatchesToParty.map(d => {
+      const gpSale = parseFloat(d.total_mandi_sale_amount) || 0;
+      const gpPaid = payments.filter(py => py.gatepass_id === d.gatepass_id).reduce((sum, py) => sum + (parseFloat(py.amount) || 0), 0);
+      return { gatepass_id: d.gatepass_id, vehicle: d.vehicle_number, sale: gpSale, paid: gpPaid, due: gpSale - gpPaid };
+    });
+
+    return { id: p.id, name: p.name, totalSale, paidAmount, due: totalSale - paidAmount, gpBreakdown };
+  });
 
   return (
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 14 }}>
-        <span style={{ fontWeight: 700, fontSize: 16 }}>Party Outstanding Dues</span>
+        <span style={{ fontWeight: 700, fontSize: 16 }}>Party Ledgers & History</span>
         <button onClick={() => setShowForm(true)} style={s.btn(clr.orange, "#000")}>+ Record Cash Receipts</button>
       </div>
 
-      {partyDues.map(p => (
-        <div key={p.id} style={s.card2}>
+      {partySummary.map(p => (
+        <div key={p.id} style={{ ...s.card, marginBottom: 14 }}>
           <div style={s.rowBetween}>
-            <div><div style={{ fontWeight: 700, fontSize: 15 }}>{p.name}</div></div>
-            <strong style={{ color: clr.red, fontSize: 16 }}>₹{fmt(p.due)}</strong>
+            <span style={{ fontWeight: 800, fontSize: 16, color: clr.accent }}>{p.name}</span>
+            <strong style={{ color: p.due > 0 ? clr.red : clr.green }}>Net Due: ₹{fmt(p.due)}</strong>
+          </div>
+          
+          {/* Detailed Gatepass-wise Breakdown History */}
+          <div style={{ marginTop: 10, background: clr.card2, borderRadius: 8, padding: 10 }}>
+            <div style={{ ...s.label, fontSize: "11px", color: clr.muted, marginBottom: 6 }}>Gatepass Payment History</div>
+            {p.gpBreakdown.length === 0 ? (
+              <div style={{ fontSize: 12, color: clr.muted }}>No dispatches recorded.</div>
+            ) : (
+              p.gpBreakdown.map((gp, idx) => (
+                <div key={idx} style={{ fontSize: 13, borderBottom: idx !== p.gpBreakdown.length - 1 ? `1px solid ${clr.border}` : "none", padding: "6px 0" }}>
+                  <div style={s.rowBetween}>
+                    <span><strong>GP: {gp.gatepass_id}</strong> ({gp.vehicle})</span>
+                    <span style={{ fontSize: 12, color: clr.muted }}>Sale: ₹{fmt(gp.sale)}</span>
+                  </div>
+                  <div style={{ ...s.rowBetween, marginTop: 2, fontSize: 12 }}>
+                    <span style={{ color: clr.green }}>Received: ₹{fmt(gp.paid)}</span>
+                    <span style={{ color: gp.due > 0 ? clr.red : clr.green, fontWeight: 600 }}>Due: ₹{fmt(gp.due)}</span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       ))}
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Record Payment Receipt">
-        <Field label="Link Gatepass Code"><select style={s.select} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })}><option value="">Select GP Track</option>{dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(s => <option key={s.id} value={s.gatepass_id}>{s.gatepass_id}</option>)}</select></Field>
+        <Field label="Link Gatepass Code">
+          <select style={s.select} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })}><option value="">Select GP Track</option>{dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(s => <option key={s.id} value={s.gatepass_id}>{s.gatepass_id} ({s.vehicle_number})</option>)}</select>
+        </Field>
         <Field label="Amount Received (₹)"><input type="number" style={s.input} value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></Field>
-        <Field label="Payment Mode"><select style={s.select} value={form.payment_mode} onChange={e => setForm({ ...form, payment_mode: e.target.value })}><option value="cash">Cash</option><option value="upi">UPI / NetBanking</option></select></Field>
+        <Field label="Payment Mode">
+          <select style={s.select} value={form.payment_mode} onChange={e => setForm({ ...form, payment_mode: e.target.value })}><option value="cash">Cash</option><option value="IMPS">IMPS / NetBanking</option><option value="UPI">UPI</option></select>
+        </Field>
+        <Field label="Date"><input type="date" style={s.input} value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></Field>
         <button onClick={save} style={s.btn(clr.orange, "#000")}>Log Payment Receipt</button>
       </Modal>
     </div>
   );
 };
 
-// ===== COLD STORAGE DUE SCREEN =====
-const ColdStorageDueScreen = ({ purchases, coldStorages }) => {
-  const coldStorageDues = coldStorages.map(cs => {
+// ===== COLD STORAGE DUE & HISTORY (UPDATED WITH LEDGER LOGGING) =====
+const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPayment }) => {
+  const [showPayForm, setShowPayForm] = useState(false);
+  const [payForm, setPayForm] = useState({ cold_storage_id: "", amount: "", payment_mode: "cash", date: today() });
+
+  const saveColdPayment = async () => {
+    if (!payForm.cold_storage_id || !payForm.amount) return alert("❌ Please fill Cold Storage and Amount!");
+    await opsColdPayment.addItem({ id: uid(), ...payForm });
+    setShowPayForm(false);
+    setPayForm({ cold_storage_id: "", amount: "", payment_mode: "cash", date: today() });
+  };
+
+  const coldStorageSummary = coldStorages.map(cs => {
     const lotsAtCS = purchases.filter(p => p.cold_storage_id === cs.id);
-    return { id: cs.id, name: cs.name, totalPurchased: lotsAtCS.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0) };
-  }).filter(c => c.totalPurchased > 0);
+    const totalPurchasedCost = lotsAtCS.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0);
+    const totalPaidToCold = coldPayments.filter(cp => cp.cold_storage_id === cs.id).reduce((sum, cp) => sum + (parseFloat(cp.amount) || 0), 0);
+    const historyLogs = coldPayments.filter(cp => cp.cold_storage_id === cs.id).sort((a,b) => new Date(b.date) - new Date(a.date));
+
+    return { id: cs.id, name: cs.name, totalPurchasedCost, totalPaidToCold, remainingDue: totalPurchasedCost - totalPaidToCold, historyLogs };
+  });
 
   return (
     <div style={s.content}>
-      <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 14 }}>❄️ Cold Storage Outstandings</div>
-      {coldStorageDues.map(cs => (
-        <div key={cs.id} style={s.card}>
+      <div style={{ ...s.rowBetween, marginBottom: 14 }}>
+        <span style={{ fontWeight: 700, fontSize: 16 }}>❄️ Cold Storage Outstandings</span>
+        <button onClick={() => setShowPayForm(true)} style={s.btnSm(clr.orange + "22", clr.orange)}>+ Record Paid to Cold</button>
+      </div>
+
+      {coldStorageSummary.map(cs => (
+        <div key={cs.id} style={{ ...s.card, marginBottom: 12 }}>
           <div style={s.rowBetween}>
-            <span style={{ fontWeight: 700 }}>{cs.name}</span>
-            <strong style={{ color: clr.orange, fontSize: 16 }}>₹{fmt(cs.totalPurchased)}</strong>
+            <span style={{ fontWeight: 800, fontSize: 15 }}>{cs.name}</span>
+            <strong style={{ color: cs.remainingDue > 0 ? clr.orange : clr.green, fontSize: 16 }}>Due: ₹{fmt(cs.remainingDue)}</strong>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12, color: clr.muted, marginTop: 4 }}>
+            <div>Total Booked: <strong>₹{fmt(cs.totalPurchasedCost)}</strong></div>
+            <div>Total Paid: <strong style={{ color: clr.green }}>₹{fmt(cs.totalPaidToCold)}</strong></div>
+          </div>
+
+          {/* Ledger History Breakdown */}
+          <div style={{ marginTop: 10, background: clr.card2, borderRadius: 8, padding: 10 }}>
+            <div style={{ ...s.label, fontSize: "11px", color: clr.muted, marginBottom: 4 }}>Payment Ledger History</div>
+            {cs.historyLogs.length === 0 ? (
+              <div style={{ fontSize: 12, color: clr.muted }}>No past payments recorded.</div>
+            ) : (
+              cs.historyLogs.map((log, idx) => (
+                <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: idx !== cs.historyLogs.length - 1 ? `1px solid ${clr.border}` : "none" }}>
+                  <span>📅 {log.date} — Paid by <strong style={{ textTransform: "uppercase" }}>{log.payment_mode}</strong></span>
+                  <strong style={{ color: clr.green }}>- ₹{fmt(log.amount)}</strong>
+                </div>
+              ))
+            )}
           </div>
         </div>
       ))}
+
+      <Modal open={showPayForm} onClose={() => setShowPayForm(false)} title="Record Cold Storage Payment">
+        <Field label="Select Cold Storage">
+          <select style={s.select} value={payForm.cold_storage_id} onChange={e => setPayForm({ ...payForm, cold_storage_id: e.target.value })}><option value="">Choose Storage Location</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        </Field>
+        <Field label="Amount Paid (₹)"><input type="number" style={s.input} value={payForm.amount} onChange={e => setPayForm({ ...payForm, amount: e.target.value })} /></Field>
+        <Field label="Payment Method">
+          <select style={s.select} value={payForm.payment_mode} onChange={e => setPayForm({ ...payForm, payment_mode: e.target.value })}><option value="cash">Cash</option><option value="IMPS">IMPS / NetBanking</option><option value="UPI">UPI</option><option value="Cheque">Cheque</option></select>
+        </Field>
+        <Field label="Payment Date"><input type="date" style={s.input} value={payForm.date} onChange={e => setPayForm({ ...payForm, date: e.target.value })} /></Field>
+        <button onClick={saveColdPayment} style={s.btn(clr.orange, "#000")}>Log Cold Payment Entry</button>
+      </Modal>
     </div>
   );
 };
@@ -598,13 +645,9 @@ const PnLScreen = ({ dispatches, parties, mandis }) => {
 
         return (
           <div key={sale.id} style={{ ...s.card, borderLeft: `4px solid ${clr.blue}` }}>
-            <div style={s.rowBetween}>
-              <Badge v={`GP: ${sale.gatepass_id}`} color={clr.blue} />
-              <strong style={{ color: clr.green, fontSize: 14 }}>{mandiName}</strong>
-            </div>
+            <div style={s.rowBetween}><Badge v={`GP: ${sale.gatepass_id}`} color={clr.blue} /><strong style={{ color: clr.green, fontSize: 14 }}>{mandiName}</strong></div>
             <div style={{ fontSize: 13, color: clr.muted, marginTop: 4 }}>Party Reference: <strong>{partyName}</strong></div>
             <div style={s.divider} />
-
             <div style={{ fontSize: 13, background: clr.card2, padding: 8, borderRadius: 8 }}>
               <div>Stock Purchase Cost: <strong>₹{fmt(totalPurchaseCost)}</strong></div>
               <div>Gross Sale Revenue: <strong style={{ color: clr.green }}>₹{fmt(sale.total_mandi_sale_amount)}</strong></div>
@@ -634,9 +677,7 @@ const MasterSection = ({ title, items, fields, ops }) => {
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={s.rowBetween}><span style={{ fontWeight: 700, fontSize: 15 }}>{title} Registry</span><button onClick={() => setShowForm(true)} style={s.btnSm()}>+ Add</button></div>
-      {items.map(item => (
-        <div key={item.id} style={{ ...s.card2, margin: "6px 0", fontSize: 14 }}>{item[fields[0].key]}</div>
-      ))}
+      {items.map(item => <div key={item.id} style={{ ...s.card2, margin: "6px 0", fontSize: 14 }}>{item[fields[0].key]}</div>)}
       <Modal open={showForm} onClose={() => setShowForm(false)} title={`Configure ${title}`}>
         {fields.map(f => <Field key={f.key} label={f.label}><input style={s.input} value={form[f.key] || ""} onChange={e => setForm({ ...form, [f.key]: e.target.value })} /></Field>)}
         <button onClick={save} style={s.btn()}>Submit Master Setup</button>
@@ -666,11 +707,12 @@ export default function App() {
   const purchases = useSupabaseTable("purchases");
   const dispatches = useSupabaseTable("dispatches");
   const payments = useSupabaseTable("payments");
+  const coldPayments = useSupabaseTable("cold_payments"); // Separate State for Cold Storage Ledger Trace
 
   return (
     <div style={s.screen}>
       <div style={s.header}>
-        <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 AlooTrader v5.3</span>
+        <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 AlooTrader v5.4</span>
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
@@ -679,7 +721,7 @@ export default function App() {
       {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} varieties={varieties.data} gradings={gradings.data} />}
       {activeTab === "sale" && <SaleScreen dispatches={dispatches.data} opsD={dispatches} />}
       {activeTab === "payment" && <PaymentScreen dispatches={dispatches.data} purchases={purchases.data} payments={payments.data} opsPayment={payments} parties={parties.data} />}
-      {activeTab === "colddue" && <ColdStorageDueScreen purchases={purchases.data} coldStorages={coldStorages.data} />}
+      {activeTab === "colddue" && <ColdStorageDueScreen purchases={purchases.data} coldStorages={coldStorages.data} coldPayments={coldPayments.data} opsColdPayment={coldPayments} />}
       {activeTab === "pnl" && <PnLScreen dispatches={dispatches.data} parties={parties.data} mandis={mandis.data} />}
       {activeTab === "master" && <MasterScreen varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} mandis={mandis.data} parties={parties.data} opsV={varieties} opsG={gradings} opsCS={coldStorages} opsM={mandis} opsPA={parties} />}
 
