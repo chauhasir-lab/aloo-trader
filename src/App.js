@@ -483,7 +483,7 @@ const SaleScreen = ({ dispatches, opsD }) => {
   );
 };
 
-// ===== FINANCIAL PAYMENTS (UPDATED WITH GATEPASS PAYMENT HISTORY) =====
+// ===== FINANCIAL PAYMENTS (FILTERED FOR ACTIVE PARTIES ONLY) =====
 const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ gatepass_id: "", amount: "", payment_mode: "cash", date: today(), notes: "" });
@@ -494,13 +494,13 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
     setShowForm(false);
   };
 
-  const partySummary = parties.map(p => {
+  // Compile summary and filter out entirely inactive parties to prevent clutter
+  const activePartiesSummary = parties.map(p => {
     const dispatchesToParty = dispatches.filter(d => d.destination_party_id === p.id);
     const totalSale = dispatchesToParty.reduce((sum, d) => sum + (parseFloat(d.total_mandi_sale_amount) || 0), 0);
     const gpsToParty = dispatchesToParty.map(d => d.gatepass_id);
     const paidAmount = payments.filter(py => gpsToParty.includes(py.gatepass_id)).reduce((sum, py) => sum + (parseFloat(py.amount) || 0), 0);
     
-    // Gatepass level history breakdown for this party
     const gpBreakdown = dispatchesToParty.map(d => {
       const gpSale = parseFloat(d.total_mandi_sale_amount) || 0;
       const gpPaid = payments.filter(py => py.gatepass_id === d.gatepass_id).reduce((sum, py) => sum + (parseFloat(py.amount) || 0), 0);
@@ -508,29 +508,28 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
     });
 
     return { id: p.id, name: p.name, totalSale, paidAmount, due: totalSale - paidAmount, gpBreakdown };
-  });
+  }).filter(p => p.gpBreakdown.length > 0 || p.due !== 0); // SMART FILTER: Sirf active transactions ya pending due wali show hongi
 
   return (
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 14 }}>
-        <span style={{ fontWeight: 700, fontSize: 16 }}>Party Ledgers & History</span>
+        <span style={{ fontWeight: 700, fontSize: 16 }}>Party Ledgers (Active)</span>
         <button onClick={() => setShowForm(true)} style={s.btn(clr.orange, "#000")}>+ Record Cash Receipts</button>
       </div>
 
-      {partySummary.map(p => (
-        <div key={p.id} style={{ ...s.card, marginBottom: 14 }}>
-          <div style={s.rowBetween}>
-            <span style={{ fontWeight: 800, fontSize: 16, color: clr.accent }}>{p.name}</span>
-            <strong style={{ color: p.due > 0 ? clr.red : clr.green }}>Net Due: ₹{fmt(p.due)}</strong>
-          </div>
-          
-          {/* Detailed Gatepass-wise Breakdown History */}
-          <div style={{ marginTop: 10, background: clr.card2, borderRadius: 8, padding: 10 }}>
-            <div style={{ ...s.label, fontSize: "11px", color: clr.muted, marginBottom: 6 }}>Gatepass Payment History</div>
-            {p.gpBreakdown.length === 0 ? (
-              <div style={{ fontSize: 12, color: clr.muted }}>No dispatches recorded.</div>
-            ) : (
-              p.gpBreakdown.map((gp, idx) => (
+      {activePartiesSummary.length === 0 ? (
+        <div style={{ ...s.card, color: clr.muted, textAlign: "center", padding: 20 }}>Koi active party ya history transaction nahi mila.</div>
+      ) : (
+        activePartiesSummary.map(p => (
+          <div key={p.id} style={{ ...s.card, marginBottom: 14 }}>
+            <div style={s.rowBetween}>
+              <span style={{ fontWeight: 800, fontSize: 16, color: clr.accent }}>{p.name}</span>
+              <strong style={{ color: p.due > 0 ? clr.red : clr.green }}>Net Due: ₹{fmt(p.due)}</strong>
+            </div>
+            
+            <div style={{ marginTop: 10, background: clr.card2, borderRadius: 8, padding: 10 }}>
+              <div style={{ ...s.label, fontSize: "11px", color: clr.muted, marginBottom: 6 }}>Gatepass Payment History</div>
+              {p.gpBreakdown.map((gp, idx) => (
                 <div key={idx} style={{ fontSize: 13, borderBottom: idx !== p.gpBreakdown.length - 1 ? `1px solid ${clr.border}` : "none", padding: "6px 0" }}>
                   <div style={s.rowBetween}>
                     <span><strong>GP: {gp.gatepass_id}</strong> ({gp.vehicle})</span>
@@ -541,11 +540,11 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
                     <span style={{ color: gp.due > 0 ? clr.red : clr.green, fontWeight: 600 }}>Due: ₹{fmt(gp.due)}</span>
                   </div>
                 </div>
-              ))
-            )}
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        ))
+      )}
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Record Payment Receipt">
         <Field label="Link Gatepass Code">
@@ -562,7 +561,7 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
   );
 };
 
-// ===== COLD STORAGE DUE & HISTORY (UPDATED WITH LEDGER LOGGING) =====
+// ===== COLD STORAGE DUE & HISTORY (FILTERED FOR ACTIVE COLD STORAGES ONLY) =====
 const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPayment }) => {
   const [showPayForm, setShowPayForm] = useState(false);
   const [payForm, setPayForm] = useState({ cold_storage_id: "", amount: "", payment_mode: "cash", date: today() });
@@ -574,49 +573,53 @@ const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPa
     setPayForm({ cold_storage_id: "", amount: "", payment_mode: "cash", date: today() });
   };
 
-  const coldStorageSummary = coldStorages.map(cs => {
+  // Compile summary and filter out empty cold storage houses to clean screen
+  const activeColdSummary = coldStorages.map(cs => {
     const lotsAtCS = purchases.filter(p => p.cold_storage_id === cs.id);
     const totalPurchasedCost = lotsAtCS.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0);
     const totalPaidToCold = coldPayments.filter(cp => cp.cold_storage_id === cs.id).reduce((sum, cp) => sum + (parseFloat(cp.amount) || 0), 0);
     const historyLogs = coldPayments.filter(cp => cp.cold_storage_id === cs.id).sort((a,b) => new Date(b.date) - new Date(a.date));
 
     return { id: cs.id, name: cs.name, totalPurchasedCost, totalPaidToCold, remainingDue: totalPurchasedCost - totalPaidToCold, historyLogs };
-  });
+  }).filter(c => c.totalPurchasedCost > 0 || c.historyLogs.length > 0 || c.remainingDue !== 0); // SMART FILTER: Sirf active stock ya payment history wale cold storage dikhenge
 
   return (
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 14 }}>
-        <span style={{ fontWeight: 700, fontSize: 16 }}>❄️ Cold Storage Outstandings</span>
+        <span style={{ fontWeight: 700, fontSize: 16 }}>❄️ Cold Outstandings (Active)</span>
         <button onClick={() => setShowPayForm(true)} style={s.btnSm(clr.orange + "22", clr.orange)}>+ Record Paid to Cold</button>
       </div>
 
-      {coldStorageSummary.map(cs => (
-        <div key={cs.id} style={{ ...s.card, marginBottom: 12 }}>
-          <div style={s.rowBetween}>
-            <span style={{ fontWeight: 800, fontSize: 15 }}>{cs.name}</span>
-            <strong style={{ color: cs.remainingDue > 0 ? clr.orange : clr.green, fontSize: 16 }}>Due: ₹{fmt(cs.remainingDue)}</strong>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12, color: clr.muted, marginTop: 4 }}>
-            <div>Total Booked: <strong>₹{fmt(cs.totalPurchasedCost)}</strong></div>
-            <div>Total Paid: <strong style={{ color: clr.green }}>₹{fmt(cs.totalPaidToCold)}</strong></div>
-          </div>
+      {activeColdSummary.length === 0 ? (
+        <div style={{ ...s.card, color: clr.muted, textAlign: "center", padding: 20 }}>Koi active cold storage records ya stock nahi mila.</div>
+      ) : (
+        activeColdSummary.map(cs => (
+          <div key={cs.id} style={{ ...s.card, marginBottom: 12 }}>
+            <div style={s.rowBetween}>
+              <span style={{ fontWeight: 800, fontSize: 15 }}>{cs.name}</span>
+              <strong style={{ color: cs.remainingDue > 0 ? clr.orange : clr.green, fontSize: 16 }}>Due: ₹{fmt(cs.remainingDue)}</strong>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12, color: clr.muted, marginTop: 4 }}>
+              <div>Total Booked: <strong>₹{fmt(cs.totalPurchasedCost)}</strong></div>
+              <div>Total Paid: <strong style={{ color: clr.green }}>₹{fmt(cs.totalPaidToCold)}</strong></div>
+            </div>
 
-          {/* Ledger History Breakdown */}
-          <div style={{ marginTop: 10, background: clr.card2, borderRadius: 8, padding: 10 }}>
-            <div style={{ ...s.label, fontSize: "11px", color: clr.muted, marginBottom: 4 }}>Payment Ledger History</div>
-            {cs.historyLogs.length === 0 ? (
-              <div style={{ fontSize: 12, color: clr.muted }}>No past payments recorded.</div>
-            ) : (
-              cs.historyLogs.map((log, idx) => (
-                <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: idx !== cs.historyLogs.length - 1 ? `1px solid ${clr.border}` : "none" }}>
-                  <span>📅 {log.date} — Paid by <strong style={{ textTransform: "uppercase" }}>{log.payment_mode}</strong></span>
-                  <strong style={{ color: clr.green }}>- ₹{fmt(log.amount)}</strong>
-                </div>
-              ))
-            )}
+            <div style={{ marginTop: 10, background: clr.card2, borderRadius: 8, padding: 10 }}>
+              <div style={{ ...s.label, fontSize: "11px", color: clr.muted, marginBottom: 4 }}>Payment Ledger History</div>
+              {cs.historyLogs.length === 0 ? (
+                <div style={{ fontSize: 12, color: clr.muted }}>No past payments recorded.</div>
+              ) : (
+                cs.historyLogs.map((log, idx) => (
+                  <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: idx !== cs.historyLogs.length - 1 ? `1px solid ${clr.border}` : "none" }}>
+                    <span>📅 {log.date} — Paid by <strong style={{ textTransform: "uppercase" }}>{log.payment_mode}</strong></span>
+                    <strong style={{ color: clr.green }}>- ₹{fmt(log.amount)}</strong>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        ))
+      )}
 
       <Modal open={showPayForm} onClose={() => setShowPayForm(false)} title="Record Cold Storage Payment">
         <Field label="Select Cold Storage">
@@ -707,12 +710,12 @@ export default function App() {
   const purchases = useSupabaseTable("purchases");
   const dispatches = useSupabaseTable("dispatches");
   const payments = useSupabaseTable("payments");
-  const coldPayments = useSupabaseTable("cold_payments"); // Separate State for Cold Storage Ledger Trace
+  const coldPayments = useSupabaseTable("cold_payments");
 
   return (
     <div style={s.screen}>
       <div style={s.header}>
-        <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 AlooTrader v5.4</span>
+        <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 AlooTrader v5.5</span>
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
