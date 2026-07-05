@@ -104,7 +104,7 @@ const Icon = ({ name, size = 18, color = clr.text }) => {
 const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div style={s.label}>{label}</div>{children}</div>;
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 14, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
 
-// ===== DASHBOARD SCREEN =====
+// ===== DASHBOARD SCREEN (ADDED LIVE P&L CARD) =====
 const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
   const totalBagsPurchased = purchases.reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
   const totalBagsRemaining = purchases.reduce((sum, p) => sum + getRemainingBags(p, dispatches), 0);
@@ -116,8 +116,33 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
   const totalPaymentsReceived = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
   const pendingDue = totalSaleValue - totalPaymentsReceived;
 
+  // Realized Profit & Loss Logic for Dashboard
+  const soldDispatches = dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0);
+  const totalSoldPurchaseCost = soldDispatches.reduce((sum, d) => sum + (d.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0) || 0), 0);
+  const totalMandiRevenue = soldDispatches.reduce((sum, d) => sum + (parseFloat(d.total_mandi_sale_amount) || 0), 0);
+  const dynamicNetProfit = totalMandiRevenue - totalSoldPurchaseCost;
+
   return (
     <div style={s.content}>
+      {/* 📈 REALIZED PROFIT & LOSS DASHBOARD CARD */}
+      <div style={{ ...s.card, background: dynamicNetProfit >= 0 ? clr.green + "1a" : clr.red + "1a", borderColor: dynamicNetProfit >= 0 ? clr.green : clr.red, marginBottom: 14 }}>
+        <div style={s.rowBetween}>
+          <span style={{ ...s.label, fontSize: "13px", color: dynamicNetProfit >= 0 ? clr.green : clr.red }}>📊 Realized Profit & Loss (Live)</span>
+          <Badge v={dynamicNetProfit >= 0 ? "PROFIT" : "LOSS"} color={dynamicNetProfit >= 0 ? clr.green : clr.red} />
+        </div>
+        <div style={s.divider} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 4 }}>
+          <span style={{ fontSize: "14px", color: clr.muted }}>Net Realized Margin:</span>
+          <span style={{ fontSize: "26px", fontWeight: 900, color: dynamicNetProfit >= 0 ? clr.green : clr.red }}>
+            {dynamicNetProfit >= 0 ? "+" : ""}₹{fmt(dynamicNetProfit)}
+          </span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10, fontSize: "12px", color: clr.muted }}>
+          <div>Sold Batches Cost: <strong style={{ color: clr.text }}>₹{fmt(totalSoldPurchaseCost)}</strong></div>
+          <div>Mandi Gross Revenue: <strong style={{ color: clr.green }}>₹{fmt(totalMandiRevenue)}</strong></div>
+        </div>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
         <div style={{ ...s.card2, background: clr.accent + "15" }}><div style={s.label}>Total Bags Stock</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.accent }}>{totalBagsPurchased} Bags</div></div>
         <div style={{ ...s.card2, background: clr.green + "15" }}><div style={s.label}>Total Remaining</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.green }}>{totalBagsRemaining} Bags</div></div>
@@ -128,44 +153,13 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
         <div style={{ ...s.card2, background: clr.red + "15" }}><div style={s.label}>Closed Lots</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.red }}>{closedLots} Lots</div></div>
       </div>
 
-      <div style={{ ...s.card, background: clr.green + "15" }}>
+      <div style={{ ...s.card, background: clr.blue + "10" }}>
         <div style={s.label}>✅ Sales & Payments Summary</div>
         <div style={s.divider} />
         <div style={{ fontSize: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span>Total Sales:</span><strong style={{ color: clr.green }}>₹{fmt(totalSaleValue)}</strong></div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span>Received:</span><strong>₹{fmt(totalPaymentsReceived)}</strong></div>
           <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${clr.border}`, paddingTop: 6 }}><span style={{ fontWeight: 600 }}>Pending Due:</span><strong style={{ color: clr.orange }}>₹{fmt(pendingDue)}</strong></div>
-        </div>
-      </div>
-
-      <div style={{ marginTop: 20 }}>
-        <span style={{ ...s.label, fontSize: "14px", color: clr.accent }}>📋 Recent Activities (Last 3)</span>
-        
-        <div style={{ ...s.card, marginTop: 10 }}>
-          <div style={{ ...s.label, fontSize: "11px", color: clr.blue }}>Last 3 Purchases</div>
-          {purchases.slice(0, 3).map((p, i) => (
-            <div key={i} style={{ fontSize: "13px", margin: "6px 0", display: "flex", justifyContent: "space-between" }}>
-              <span>{p.farmer_name} ({p.lot_id})</span><strong>{p.manual_bags} Bags</strong>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ ...s.card }}>
-          <div style={{ ...s.label, fontSize: "11px", color: clr.purple }}>Last 3 Dispatches</div>
-          {dispatches.slice(0, 3).map((d, i) => (
-            <div key={i} style={{ fontSize: "13px", margin: "6px 0", display: "flex", justifyContent: "space-between" }}>
-              <span>GP: {d.gatepass_id} ({d.vehicle_number})</span><strong>{d.lot_details?.reduce((acc, curr) => acc + (parseInt(curr.purchase_bags) || 0), 0)} Bags</strong>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ ...s.card }}>
-          <div style={{ ...s.label, fontSize: "11px", color: clr.green }}>Last 3 Mandi Sales</div>
-          {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).slice(0, 3).map((sx, i) => (
-            <div key={i} style={{ fontSize: "13px", margin: "6px 0", display: "flex", justifyContent: "space-between" }}>
-              <span>GP: {sx.gatepass_id} ({mandis.find(m => m.id === sx.mandi_id)?.name || "Mandi"})</span><strong style={{ color: clr.green }}>₹{fmt(sx.total_mandi_sale_amount)}</strong>
-            </div>
-          ))}
         </div>
       </div>
     </div>
@@ -260,7 +254,7 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   );
 };
 
-// ===== DISPATCH LOGISTICS (UPDATED SUMMARY VALUES) =====
+// ===== DISPATCH LOGISTICS (LOADED VALUE LOGIC INSTALLED) =====
 const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varieties, gradings }) => {
   const [showForm, setShowForm] = useState(false);
   const [showPopModal, setShowPopModal] = useState(false);
@@ -322,10 +316,19 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
     if (!form.gatepass_id || !form.destination_party_id || !form.mandi_id || form.lot_details.length === 0) {
       return alert("❌ Complete the form with at least 1 Lot!");
     }
-    const storedObj = { ...form, id: uid() };
+    
+    const { total_purchase_amount, total_dispatch_weight, ...cleanPayload } = form;
+    const storedObj = { ...cleanPayload, id: uid() };
     const result = await opsD.addItem(storedObj);
-    setShowForm(false);
-    triggerPopMsg(storedObj);
+    
+    if (result) {
+      setShowForm(false);
+      triggerPopMsg({
+        ...storedObj,
+        total_purchase_amount: form.total_purchase_amount,
+        total_dispatch_weight: form.total_dispatch_weight
+      });
+    }
   };
 
   return (
@@ -337,8 +340,8 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
 
       {dispatches.map(d => {
         const totalBagsInTruck = d.lot_details?.reduce((acc, curr) => acc + (parseInt(curr.purchase_bags) || 0), 0) || 0;
-        const totalWeightInTruck = d.lot_details?.reduce((acc, curr) => acc + (parseFloat(curr.purchase_weight_kg) || 0), 0) || d.total_dispatch_weight || 0;
-        const totalValueInTruck = d.total_purchase_amount || 0;
+        const totalWeightInTruck = d.lot_details?.reduce((acc, curr) => acc + (parseFloat(curr.purchase_weight_kg) || 0), 0) || 0;
+        const totalValueInTruck = d.lot_details?.reduce((acc, curr) => acc + (parseFloat(curr.purchase_lot_value) || 0), 0) || 0;
 
         return (
           <div key={d.id} style={s.card}>
@@ -348,14 +351,17 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
             </div>
             
             <div style={s.divider} />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13, background: "#0001", padding: 6, borderRadius: 6 }}>
-              <div>Total Loaded Bags: <strong>{totalBagsInTruck}</strong></div>
-              <div>Total Dispatch Weight: <strong style={{ color: clr.blue }}>{totalWeightInTruck} kg</strong></div>
-              <div style={{ gridColumn: "1 / span 2" }}>Total Load Value: <strong style={{ color: clr.green }}>₹{fmt(totalValueInTruck)}</strong></div>
+            {/* 🚚 REAL-TIME VALUE DISPLAY PANEL */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13, background: clr.accent + "0b", padding: 10, borderRadius: 8, border: `1px dashed ${clr.border}` }}>
+              <div>Loaded Bags: <strong>{totalBagsInTruck} Bags</strong></div>
+              <div>Dispatch Wt: <strong>{totalWeightInTruck} kg</strong></div>
+              <div style={{ gridColumn: "1 / span 2", marginTop: 4, borderTop: `1px solid ${clr.border}`, paddingTop: 4 }}>
+                Loaded Cost Value: <strong style={{ color: clr.accent, fontSize: "14px" }}>₹{fmt(totalValueInTruck)}</strong>
+              </div>
             </div>
 
             <div style={{ ...s.row, marginTop: 10 }}>
-              <button onClick={() => triggerPopMsg(d)} style={{ ...s.btnSm(clr.blue + "22", clr.blue), flex: 1 }}><Icon name="info" size={12} color={clr.blue} /> Dispatch Details Pop</button>
+              <button onClick={() => triggerPopMsg({ ...d, total_purchase_amount: totalValueInTruck, total_dispatch_weight: totalWeightInTruck })} style={{ ...s.btnSm(clr.blue + "22", clr.blue), flex: 1 }}><Icon name="info" size={12} color={clr.blue} /> View Details Summary</button>
               <button onClick={() => { if(window.confirm("Delete?")) opsD.deleteItem(d.id); }} style={{ ...s.btnSm(), color: clr.red }}><Icon name="trash" size={12} color={clr.red} /></button>
             </div>
           </div>
@@ -371,8 +377,8 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
             <div><strong>Target Mandi:</strong> {mandis.find(m => m.id === popData.mandi_id)?.name || "N/A"}</div>
             
             <div style={{ background: clr.card2, padding: 8, borderRadius: 6, marginTop: 8, fontSize: "13px" }}>
-              <div><strong>📦 Total Dispatch Weight:</strong> {popData.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0) || popData.total_dispatch_weight} kg</div>
-              <div><strong>💰 Total Loaded Value:</strong> ₹{fmt(popData.total_purchase_amount)}</div>
+              <div><strong>📦 Total Dispatch Weight:</strong> {popData.total_dispatch_weight || popData.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0)} kg</div>
+              <div><strong>💰 Total Loaded Value:</strong> <span style={{ color: clr.accent, fontWeight: 700 }}>₹{fmt(popData.total_purchase_amount || popData.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0))}</span></div>
             </div>
 
             <div style={s.divider} />
@@ -382,7 +388,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
                 <div>• <strong>Lot ID:</strong> {l.lot_number}</div>
                 <div>• <strong>Variety:</strong> {l.variety_name || "N/A"} | <strong>Grading:</strong> {l.grading_name || "N/A"}</div>
                 <div>• <strong>Bags Count:</strong> {l.purchase_bags} Bags</div>
-                <div>• <strong>Weight:</strong> {l.purchase_weight_kg} kg</div>
+                <div>• <strong>Weight/Value:</strong> {l.purchase_weight_kg} kg (~₹{fmt(l.purchase_lot_value)})</div>
               </div>
             ))}
             <div style={s.divider} />
@@ -413,6 +419,9 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
                 • Lot {l.lot_number} — {l.purchase_bags} Bags ({l.purchase_weight_kg} kg)
               </div>
             ))}
+            <div style={{ borderTop: `1px dashed ${clr.border}`, marginTop: 6, paddingTop: 6, color: clr.accent }}>
+              Current Running Load Value: <strong>₹{fmt(form.total_purchase_amount)}</strong>
+            </div>
           </div>
         )}
 
@@ -422,22 +431,24 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
   );
 };
 
-// ===== MANDI SALE SCREEN (SIMPLE MODEL - WEIGHT AND TOTAL SALE PRICE) =====
+// ===== MANDI SALE SCREEN (LOADED VALUE RELATION COMPLETED) =====
 const SaleScreen = ({ dispatches, opsD }) => {
   const [showForm, setShowForm] = useState(false);
   const [selectedDispatchId, setSelectedDispatchId] = useState("");
-  const [form, setForm] = useState({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "" });
+  const [form, setForm] = useState({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "", original_load_value: 0 });
 
   const loadDispatchData = (dispatchId) => {
     setSelectedDispatchId(dispatchId);
     const targetDispatch = dispatches.find(d => d.id === dispatchId);
     if (targetDispatch) {
-      const dispatchWeight = targetDispatch.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0) || targetDispatch.total_dispatch_weight || 0;
+      const dispatchWeight = targetDispatch.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0) || 0;
+      const dispatchCostValue = targetDispatch.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0) || 0;
       setForm({
         id: targetDispatch.id,
         gatepass_id: targetDispatch.gatepass_id,
         total_mandi_weight_received: dispatchWeight, 
-        total_mandi_sale_amount: ""
+        total_mandi_sale_amount: "",
+        original_load_value: dispatchCostValue
       });
     }
   };
@@ -460,17 +471,22 @@ const SaleScreen = ({ dispatches, opsD }) => {
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 14 }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>Mandi Sales Book</span>
-        <button onClick={() => { setSelectedDispatchId(""); setForm({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "" }); setShowForm(true); }} style={s.btn(clr.green, "#fff")}>New Mandi Sale Entry</button>
+        <button onClick={() => { setSelectedDispatchId(""); setForm({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "", original_load_value: 0 }); setShowForm(true); }} style={s.btn(clr.green, "#fff")}>New Mandi Sale Entry</button>
       </div>
 
-      {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(sx => (
-        <div key={sx.id} style={s.card}>
-          <div style={s.rowBetween}><Badge v={`GP Link: ${sx.gatepass_id}`} color={clr.green} /><strong>₹{fmt(sx.total_mandi_sale_amount)}</strong></div>
-          <div style={{ fontSize: 13, color: clr.muted, marginTop: 4 }}>
-            Mandi Received Weight: <strong>{sx.total_mandi_weight_received || sx.total_dispatch_weight} kg</strong>
+      {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(sx => {
+        const loadedValue = sx.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0) || 0;
+        return (
+          <div key={sx.id} style={s.card}>
+            <div style={s.rowBetween}><Badge v={`GP Link: ${sx.gatepass_id}`} color={clr.green} /><strong>Sale: ₹{fmt(sx.total_mandi_sale_amount)}</strong></div>
+            <div style={{ fontSize: 13, color: clr.muted, marginTop: 6, background: "#0001", padding: 6, borderRadius: 6 }}>
+              <div>Mandi Wt Received: <strong>{sx.total_mandi_weight_received} kg</strong></div>
+              {/* 💸 SHOWS WHAT VALUE WAS ORIGINALLY LOADED DURING DISPATCH */}
+              <div style={{ marginTop: 2, color: clr.accent }}>Original Truck Loaded Value: <strong>₹{fmt(loadedValue)}</strong></div>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Record Simple Mandi Sale">
         <Field label="Select Target Gatepass Track">
@@ -484,6 +500,11 @@ const SaleScreen = ({ dispatches, opsD }) => {
         
         {form.gatepass_id && (
           <>
+            {/* 💡 LIVE CONSOLE FOR TRADING AGENT TO KEEP EYE ON PURHCASE VALUE */}
+            <div style={{ background: clr.card2, padding: 10, borderRadius: 8, marginBottom: 12, fontSize: "13px", borderLeft: `3px solid ${clr.accent}` }}>
+              ⚠️ **Truck History Monitor:** Is vehicle mein total **₹{fmt(form.original_load_value)}** ki cost ka maal load kiya gaya tha. Iske upar hi boli sale register karein.
+            </div>
+
             <Field label="Total Mandi Received Weight (kg)">
               <input type="number" style={s.input} placeholder="Enter total weight arrived at mandi" value={form.total_mandi_weight_received} onChange={e => setForm({ ...form, total_mandi_weight_received: e.target.value })} />
             </Field>
@@ -573,6 +594,7 @@ const PnLScreen = ({ dispatches, parties, mandis }) => {
       {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(sale => {
         const partyName = parties.find(p => p.id === sale.destination_party_id)?.name || "Unknown";
         const mandiName = mandis.find(m => m.id === sale.mandi_id)?.name || "Unknown";
+        const totalPurchaseCost = sale.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0) || 0;
 
         return (
           <div key={sale.id} style={{ ...s.card, borderLeft: `4px solid ${clr.blue}` }}>
@@ -584,10 +606,10 @@ const PnLScreen = ({ dispatches, parties, mandis }) => {
             <div style={s.divider} />
 
             <div style={{ fontSize: 13, background: clr.card2, padding: 8, borderRadius: 8 }}>
-              <div>Stock Purchase Cost: <strong>₹{fmt(sale.total_purchase_amount)}</strong></div>
+              <div>Stock Purchase Cost: <strong>₹{fmt(totalPurchaseCost)}</strong></div>
               <div>Gross Sale Revenue: <strong style={{ color: clr.green }}>₹{fmt(sale.total_mandi_sale_amount)}</strong></div>
               <div style={{ borderTop: `1px solid ${clr.border}`, paddingTop: 6, marginTop: 6 }}>
-                Net Net GP Margin: <strong style={{ fontSize: 15, color: (sale.total_mandi_sale_amount - sale.total_purchase_amount) >= 0 ? clr.green : clr.red }}>₹{fmt(sale.total_mandi_sale_amount - sale.total_purchase_amount)}</strong>
+                Net Net GP Margin: <strong style={{ fontSize: 15, color: (sale.total_mandi_sale_amount - totalPurchaseCost) >= 0 ? clr.green : clr.red }}>₹{fmt(sale.total_mandi_sale_amount - totalPurchaseCost)}</strong>
               </div>
             </div>
           </div>
@@ -648,7 +670,7 @@ export default function App() {
   return (
     <div style={s.screen}>
       <div style={s.header}>
-        <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 AlooTrader v5.1</span>
+        <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 AlooTrader v5.3</span>
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
