@@ -125,7 +125,6 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
   const totalMandiExpenses = soldDispatches.reduce((sum, d) => sum + (parseFloat(d.total_expenses) || 0), 0);
   const dynamicNetProfit = totalMandiRevenue - totalSoldPurchaseCost - totalMandiExpenses;
 
-  // Filter Logic for Search Bar
   const q = searchQuery.trim().toUpperCase();
   const filteredPurchases = q === "" ? [] : purchases.filter(p => p.lot_id.toUpperCase().includes(q));
   const filteredDispatches = q === "" ? [] : dispatches.filter(d => d.gatepass_id.toUpperCase().includes(q) || d.lot_details?.some(l => l.lot_number.toUpperCase().includes(q)));
@@ -162,7 +161,6 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
         <div style={{ ...s.card2, background: clr.red + "15" }}><div style={s.label}>Closed Lots</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.red }}>{closedLots} Lots</div></div>
       </div>
 
-      {/* SEARCH BAR & HISTORY UTILITY */}
       <div style={{ ...s.card, marginBottom: 12 }}>
         <div style={s.label}>🔍 Quick Search History (Lot ID / GP Number)</div>
         <input 
@@ -272,7 +270,7 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
             </div>
             <div style={{ ...s.row, marginTop: 10 }}>
               <button onClick={() => { setEditItem(p); setForm({ ...p }); setShowForm(true); }} style={{ ...s.btnSm(), flex: 1 }}><Icon name="edit" size={12} /> Edit</button>
-              <button onClick={() => { if(window.confirm("Delete?")) opsP.deleteItem(p.id); }} style={{ ...s.btnSm(), flex: 1, color: clr.red }}><Icon name="trash" size={12} color={clr.red} /> Delete</button>
+              <button onClick={() => { if(window.confirm("🚨 Kya aap sach me ye Purchase entry delete karna chahte hain?")) opsP.deleteItem(p.id); }} style={{ ...s.btnSm(), flex: 1, color: clr.red }}><Icon name="trash" size={12} color={clr.red} /> Delete</button>
             </div>
           </div>
         );
@@ -387,7 +385,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
             </div>
             <div style={{ ...s.row, marginTop: 10 }}>
               <button onClick={() => triggerPopMsg({ ...d, total_purchase_amount: totalValueInTruck, total_dispatch_weight: totalWeightInTruck })} style={{ ...s.btnSm(clr.blue + "22", clr.blue), flex: 1 }}><Icon name="info" size={12} color={clr.blue} /> View Details Summary</button>
-              <button onClick={() => { if(window.confirm("Delete?")) opsD.deleteItem(d.id); }} style={{ ...s.btnSm(), color: clr.red }}><Icon name="trash" size={12} color={clr.red} /></button>
+              <button onClick={() => { if(window.confirm("🚨 Kya aap sach me ye Dispatch Entry delete karna chahte hain?")) opsD.deleteItem(d.id); }} style={{ ...s.btnSm(), color: clr.red }}><Icon name="trash" size={12} color={clr.red} /></button>
             </div>
           </div>
         );
@@ -532,7 +530,7 @@ const SaleScreen = ({ dispatches, opsD }) => {
   );
 };
 
-// ===== FINANCIAL PAYMENTS (FULLY EDITABLE FOR ACTIVE PARTIES) =====
+// ===== FINANCIAL PAYMENTS (FULLY EDITABLE & DELETABLE) =====
 const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -547,6 +545,14 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
     } else {
       await opsPayment.addItem({ id: uid(), ...form });
       setShowForm(false);
+    }
+  };
+
+  // Safe Confirmation Popup based Entry Deletion
+  const triggerDelete = async (id) => {
+    const isConfirmed = window.confirm("🚨 Kya aap sach me ye party payment receipt permanent delete karna chahte hain?");
+    if (isConfirmed) {
+      await opsPayment.deleteItem(id);
     }
   };
 
@@ -596,11 +602,18 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
                   {gp.logs.map((l, lIdx) => (
                     <div key={lIdx} style={{ ...s.rowBetween, marginTop: 4, background: "#0002", padding: "4px 8px", borderRadius: 4 }}>
                       <span style={{ fontSize: 12, color: clr.green }}>Received: ₹{fmt(l.amount)} ({l.payment_mode})</span>
-                      <button 
-                        onClick={() => { setEditItem(l); setForm({ ...l }); setShowForm(true); }} 
-                        style={{ ...s.btnSm(), padding: "2px 6px", fontSize: "11px" }}>
-                        ✏️ Edit
-                      </button>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button 
+                          onClick={() => { setEditItem(l); setForm({ ...l }); setShowForm(true); }} 
+                          style={{ ...s.btnSm(), padding: "2px 6px", fontSize: "11px" }}>
+                          ✏️ Edit
+                        </button>
+                        <button 
+                          onClick={() => triggerDelete(l.id)} 
+                          style={{ ...s.btnSm(), padding: "2px 6px", fontSize: "11px", color: clr.red, borderColor: clr.red + "55" }}>
+                          🗑️ Delete
+                        </button>
+                      </div>
                     </div>
                   ))}
 
@@ -633,7 +646,7 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
   );
 };
 
-// ===== COLD STORAGE DUE & HISTORY (FULLY EDITABLE FOR ACTIVE COLD STORAGES) =====
+// ===== COLD STORAGE DUE & HISTORY =====
 const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPayment }) => {
   const [showPayForm, setShowPayForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -652,6 +665,12 @@ const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPa
     setPayForm({ cold_storage_id: "", amount: "", payment_mode: "cash", date: today() });
   };
 
+  const triggerColdDelete = async (id) => {
+    if (window.confirm("🚨 Kya aap sach me ye Cold Storage payment entry delete karna chahte hain?")) {
+      await opsColdPayment.deleteItem(id);
+    }
+  };
+
   const activeColdSummary = coldStorages.map(cs => {
     const lotsAtCS = purchases.filter(p => p.cold_storage_id === cs.id);
     const totalPurchasedCost = lotsAtCS.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0);
@@ -664,7 +683,7 @@ const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPa
   return (
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 14 }}>
-        <span style={{ 700: 700, fontSize: 16 }}>❄️ Cold Outstandings (Active)</span>
+        <span style={{ fontWeight: 700, fontSize: 16 }}>❄️ Cold Outstandings (Active)</span>
         <button onClick={() => { setEditItem(null); setPayForm({ cold_storage_id: "", amount: "", payment_mode: "cash", date: today() }); setShowPayForm(true); }} style={s.btnSm(clr.orange + "22", clr.orange)}>+ Record Paid to Cold</button>
       </div>
 
@@ -678,7 +697,7 @@ const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPa
               <strong style={{ color: cs.remainingDue > 0 ? clr.orange : clr.green, fontSize: 16 }}>Due: ₹{fmt(cs.remainingDue)}</strong>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12, color: clr.muted, marginTop: 4 }}>
-              <div>Total Booked: <strong>₹{fmt(cs.totalPurchasedCost)}</strong></div>
+              <div>Total Booked: <strong>Alternative Cost</strong></div>
               <div>Total Paid: <strong style={{ color: clr.green }}>₹{fmt(cs.totalPaidToCold)}</strong></div>
             </div>
 
@@ -690,11 +709,18 @@ const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPa
                 cs.historyLogs.map((log, idx) => (
                   <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12, padding: "6px 0", borderBottom: idx !== cs.historyLogs.length - 1 ? `1px solid ${clr.border}` : "none" }}>
                     <span>📅 {log.date} — Paid <strong style={{ color: clr.green }}>₹{fmt(log.amount)}</strong> ({log.payment_mode})</span>
-                    <button 
-                      onClick={() => { setEditItem(log); setPayForm({ ...log }); setShowPayForm(true); }} 
-                      style={{ ...s.btnSm(), padding: "2px 6px", fontSize: "11px" }}>
-                      ✏️ Edit
-                    </button>
+                    <div style={{ display: "flex", gap: "4px" }}>
+                      <button 
+                        onClick={() => { setEditItem(log); setPayForm({ ...log }); setShowPayForm(true); }} 
+                        style={{ ...s.btnSm(), padding: "2px 6px", fontSize: "11px" }}>
+                        ✏️
+                      </button>
+                      <button 
+                        onClick={() => triggerColdDelete(log.id)} 
+                        style={{ ...s.btnSm(), padding: "2px 6px", fontSize: "11px", color: clr.red }}>
+                        🗑️
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -712,7 +738,7 @@ const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPa
         </Field>
         <Field label="Amount Paid (₹)"><input type="number" style={s.input} value={payForm.amount} onChange={e => setPayForm({ ...payForm, amount: e.target.value })} /></Field>
         <Field label="Payment Method">
-          <select style={s.select} value={payForm.payment_mode} onChange={e => setPayForm({ ...payForm, payment_mode: e.target.value })}><option value="cash">Cash</option><option value="IMPS">IMPS / NetBanking</option><option value="UPI">UPI</option><option value="Cheque">Cheque</option></select>
+          <select style={s.select} value={form.payment_mode} onChange={e => setPayForm({ ...payForm, payment_mode: e.target.value })}><option value="cash">Cash</option><option value="IMPS">IMPS / NetBanking</option><option value="UPI">UPI</option><option value="Cheque">Cheque</option></select>
         </Field>
         <Field label="Payment Date"><input type="date" style={s.input} value={payForm.date} onChange={e => setPayForm({ ...payForm, date: e.target.value })} /></Field>
         <button onClick={saveColdPayment} style={s.btn(clr.orange, "#000")}>{editItem ? "Update Storage Entry" : "Log Cold Payment Entry"}</button>
@@ -765,10 +791,21 @@ const MasterSection = ({ title, items, fields, ops }) => {
     setForm({});
   };
 
+  const triggerMasterDelete = async (id) => {
+    if (window.confirm(`🚨 Kya aap sach me ye registry item delete karna chahte hain?`)) {
+      await ops.deleteItem(id);
+    }
+  };
+
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={s.rowBetween}><span style={{ fontWeight: 700, fontSize: 15 }}>{title} Registry</span><button onClick={() => setShowForm(true)} style={s.btnSm()}>+ Add</button></div>
-      {items.map(item => <div key={item.id} style={{ ...s.card2, margin: "6px 0", fontSize: 14 }}>{item[fields[0].key]}</div>)}
+      {items.map(item => (
+        <div key={item.id} style={{ ...s.card2, margin: "6px 0", fontSize: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{item[fields[0].key]}</span>
+          <button onClick={() => triggerMasterDelete(item.id)} style={{ background: "none", border: "none", color: clr.red, cursor: "pointer", fontSize: "12px" }}>🗑️</button>
+        </div>
+      ))}
       <Modal open={showForm} onClose={() => setShowForm(false)} title={`Configure ${title}`}>
         {fields.map(f => <Field key={f.key} label={f.label}><input style={s.input} value={form[f.key] || ""} onChange={e => setForm({ ...form, [f.key]: e.target.value })} /></Field>)}
         <button onClick={save} style={s.btn()}>Submit Master Setup</button>
@@ -799,6 +836,22 @@ export default function App() {
   const dispatches = useSupabaseTable("dispatches");
   const payments = useSupabaseTable("payments");
   const coldPayments = useSupabaseTable("cold_payments");
+
+  // Global Safe Loading Mechanism to Prevent Cold Screen Blanks
+  const isGlobalLoading = 
+    varieties.loading || gradings.loading || coldStorages.loading || 
+    mandis.loading || parties.loading || purchases.loading || 
+    dispatches.loading || payments.loading || coldPayments.loading;
+
+  if (isGlobalLoading) {
+    return (
+      <div style={{ ...s.screen, display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", flexDirection: "column", gap: "12px" }}>
+        <div style={{ fontSize: "24px" }}>🥔</div>
+        <span style={{ color: clr.accent, fontWeight: 700, fontSize: "16px" }}>Loading AlooTrader Database...</span>
+        <span style={{ color: clr.muted, fontSize: "13px" }}>Please wait while sync stabilizes.</span>
+      </div>
+    );
+  }
 
   return (
     <div style={s.screen}>
