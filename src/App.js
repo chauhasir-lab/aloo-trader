@@ -10,16 +10,18 @@ const useSupabaseTable = (tableName) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
     const fetchData = async () => {
       try {
         setLoading(true);
         const { data: rows, error: err } = await supabase.from(tableName).select("*").order("created_at", { ascending: false });
         if (err) { console.error(`❌ FETCH (${tableName}):`, err); return; }
-        if (rows) setData(rows);
+        if (rows && isMounted) setData(rows);
       } catch (e) { console.error(e); }
-      finally { setLoading(false); }
+      finally { if (isMounted) setLoading(false); }
     };
     fetchData();
+    return () => { isMounted = false; };
   }, [tableName]);
 
   const addItem = async (item) => {
@@ -126,8 +128,8 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
   const dynamicNetProfit = totalMandiRevenue - totalSoldPurchaseCost - totalMandiExpenses;
 
   const q = searchQuery.trim().toUpperCase();
-  const filteredPurchases = q === "" ? [] : purchases.filter(p => p.lot_id.toUpperCase().includes(q));
-  const filteredDispatches = q === "" ? [] : dispatches.filter(d => d.gatepass_id.toUpperCase().includes(q) || d.lot_details?.some(l => l.lot_number.toUpperCase().includes(q)));
+  const filteredPurchases = q === "" ? [] : purchases.filter(p => p.lot_id?.toUpperCase().includes(q));
+  const filteredDispatches = q === "" ? [] : dispatches.filter(d => d.gatepass_id?.toUpperCase().includes(q) || d.lot_details?.some(l => l.lot_number?.toUpperCase().includes(q)));
 
   return (
     <div style={s.content}>
@@ -530,7 +532,7 @@ const SaleScreen = ({ dispatches, opsD }) => {
   );
 };
 
-// ===== FINANCIAL PAYMENTS (FULLY EDITABLE & DELETABLE) =====
+// ===== FINANCIAL PAYMENTS =====
 const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -548,7 +550,6 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
     }
   };
 
-  // Safe Confirmation Popup based Entry Deletion
   const triggerDelete = async (id) => {
     const isConfirmed = window.confirm("🚨 Kya aap sach me ye party payment receipt permanent delete karna chahte hain?");
     if (isConfirmed) {
@@ -632,12 +633,16 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
         <Field label="Link Gatepass Code">
           <select style={s.select} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} disabled={!!editItem}>
             <option value="">Select GP Track</option>
-            {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(s => <option key={s.id} value={s.gatepass_id}>{s.gatepass_id} ({s.vehicle_number})</option>)}
+            {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(ds => <option key={ds.id} value={ds.gatepass_id}>{ds.gatepass_id} ({ds.vehicle_number})</option>)}
           </select>
         </Field>
         <Field label="Amount Received (₹)"><input type="number" style={s.input} value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></Field>
         <Field label="Payment Mode">
-          <select style={s.select} value={form.payment_mode} onChange={e => setForm({ ...form, payment_mode: e.target.value })}><option value="cash">Cash</option><option value="IMPS">IMPS / NetBanking</option><option value="UPI">UPI</option></select>
+          <select style={s.select} value={form.payment_mode} onChange={e => setForm({ ...form, payment_mode: e.target.value })}>
+            <option value="cash">Cash</option>
+            <option value="IMPS">IMPS / NetBanking</option>
+            <option value="UPI">UPI</option>
+          </select>
         </Field>
         <Field label="Date"><input type="date" style={s.input} value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></Field>
         <button onClick={save} style={s.btn(clr.orange, "#000")}>{editItem ? "Update Receipt Log" : "Log Payment Receipt"}</button>
@@ -697,7 +702,6 @@ const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPa
               <strong style={{ color: cs.remainingDue > 0 ? clr.orange : clr.green, fontSize: 16 }}>Due: ₹{fmt(cs.remainingDue)}</strong>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12, color: clr.muted, marginTop: 4 }}>
-              <div>Total Booked: <strong>Alternative Cost</strong></div>
               <div>Total Paid: <strong style={{ color: clr.green }}>₹{fmt(cs.totalPaidToCold)}</strong></div>
             </div>
 
@@ -738,7 +742,12 @@ const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPa
         </Field>
         <Field label="Amount Paid (₹)"><input type="number" style={s.input} value={payForm.amount} onChange={e => setPayForm({ ...payForm, amount: e.target.value })} /></Field>
         <Field label="Payment Method">
-          <select style={s.select} value={form.payment_mode} onChange={e => setPayForm({ ...payForm, payment_mode: e.target.value })}><option value="cash">Cash</option><option value="IMPS">IMPS / NetBanking</option><option value="UPI">UPI</option><option value="Cheque">Cheque</option></select>
+          <select style={s.select} value={payForm.payment_mode} onChange={e => setPayForm({ ...payForm, payment_mode: e.target.value })}>
+            <option value="cash">Cash</option>
+            <option value="IMPS">IMPS / NetBanking</option>
+            <option value="UPI">UPI</option>
+            <option value="Cheque">Cheque</option>
+          </select>
         </Field>
         <Field label="Payment Date"><input type="date" style={s.input} value={payForm.date} onChange={e => setPayForm({ ...payForm, date: e.target.value })} /></Field>
         <button onClick={saveColdPayment} style={s.btn(clr.orange, "#000")}>{editItem ? "Update Storage Entry" : "Log Cold Payment Entry"}</button>
@@ -837,7 +846,6 @@ export default function App() {
   const payments = useSupabaseTable("payments");
   const coldPayments = useSupabaseTable("cold_payments");
 
-  // Global Safe Loading Mechanism to Prevent Cold Screen Blanks
   const isGlobalLoading = 
     varieties.loading || gradings.loading || coldStorages.loading || 
     mandis.loading || parties.loading || purchases.loading || 
