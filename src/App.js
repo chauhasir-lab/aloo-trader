@@ -29,7 +29,7 @@ const useSupabaseTable = (tableName) => {
       const { data: d, error: err } = await supabase.from(tableName).insert([{ ...item, created_at: new Date().toISOString() }]).select();
       if (err) { alert(`❌ Error: ${err.message}`); return null; }
       if (d && d.length > 0) {
-        setData([d[0], ...data]);
+        setData(prev => [d[0], ...prev]);
         return d[0];
       }
     } catch (e) { alert(`Error: ${e.message}`); }
@@ -39,7 +39,7 @@ const useSupabaseTable = (tableName) => {
     try {
       const { error: err } = await supabase.from(tableName).update(updates).eq("id", id);
       if (err) { alert(`Error: ${err.message}`); return false; }
-      setData(data.map(x => x.id === id ? { ...x, ...updates } : x));
+      setData(prev => prev.map(x => x.id === id ? { ...x, ...updates } : x));
       return true;
     } catch (e) { alert(`Error: ${e.message}`); }
   };
@@ -48,7 +48,7 @@ const useSupabaseTable = (tableName) => {
     try {
       const { error: err } = await supabase.from(tableName).delete().eq("id", id);
       if (err) { alert(`Error: ${err.message}`); return false; }
-      setData(data.filter(x => x.id !== id));
+      setData(prev => prev.filter(x => x.id !== id));
       return true;
     } catch (e) { alert(`Error: ${e.message}`); }
   };
@@ -106,9 +106,10 @@ const Icon = ({ name, size = 18, color = clr.text }) => {
 const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div style={s.label}>{label}</div>{children}</div>;
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 14, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
 
-// ===== DASHBOARD SCREEN =====
-const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
+// ===== DASHBOARD SCREEN WITH FULL LIFECYCLE SEARCH =====
+const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, varieties, gradings, coldStorages }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedDetail, setSelectedDetail] = useState(null);
 
   const totalBagsPurchased = purchases.reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
   const totalBagsRemaining = purchases.reduce((sum, p) => sum + getRemainingBags(p, dispatches), 0);
@@ -122,14 +123,37 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
   const pendingDue = totalSaleValue - totalPaymentsReceived;
 
   const soldDispatches = dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0);
-  const totalSoldPurchaseCost = soldDispatches.reduce((sum, d) => sum + (d.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0) || 0), 0);
+  const totalSoldPurchaseCost = soldDispatches.reduce((sum, d) => sum + ((d.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0)), 0);
   const totalMandiRevenue = soldDispatches.reduce((sum, d) => sum + (parseFloat(d.total_mandi_sale_amount) || 0), 0);
   const totalMandiExpenses = soldDispatches.reduce((sum, d) => sum + (parseFloat(d.total_expenses) || 0), 0);
   const dynamicNetProfit = totalMandiRevenue - totalSoldPurchaseCost - totalMandiExpenses;
 
-  const q = searchQuery.trim().toUpperCase();
-  const filteredPurchases = q === "" ? [] : purchases.filter(p => p.lot_id?.toUpperCase().includes(q));
-  const filteredDispatches = q === "" ? [] : dispatches.filter(d => d.gatepass_id?.toUpperCase().includes(q) || d.lot_details?.some(l => l.lot_number?.toUpperCase().includes(q)));
+  const q = searchQuery.trim().toLowerCase();
+  
+  const filteredPurchases = q === "" ? [] : purchases.filter(p => 
+    p.lot_id?.toLowerCase().includes(q) || p.farmer_name?.toLowerCase().includes(q)
+  );
+
+  const filteredDispatches = q === "" ? [] : dispatches.filter(d => 
+    d.gatepass_id?.toLowerCase().includes(q) || 
+    (d.lot_details || []).some(l => l.lot_number?.toLowerCase().includes(q))
+  );
+
+  const openFullLifecycle = (type, item) => {
+    let matchedPurchases = [];
+    let matchedDispatches = [];
+
+    if (type === "purchase") {
+      matchedPurchases = [item];
+      matchedDispatches = dispatches.filter(d => (d.lot_details || []).some(l => l.lot_number === item.lot_id));
+    } else if (type === "dispatch") {
+      matchedDispatches = [item];
+      const lotIdsInDispatch = (item.lot_details || []).map(l => l.lot_number);
+      matchedPurchases = purchases.filter(p => lotIdsInDispatch.includes(p.lot_id));
+    }
+
+    setSelectedDetail({ type, primary: item, purchases: matchedPurchases, dispatches: matchedDispatches });
+  };
 
   return (
     <div style={s.content}>
@@ -163,30 +187,46 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
         <div style={{ ...s.card2, background: clr.red + "15" }}><div style={s.label}>Closed Lots</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.red }}>{closedLots} Lots</div></div>
       </div>
 
+      {/* ENHANCED SEARCH BAR */}
       <div style={{ ...s.card, marginBottom: 12 }}>
-        <div style={s.label}>🔍 Quick Search History (Lot ID / GP Number)</div>
+        <div style={s.label}>🔍 Smart Search (Lot ID / GP Number / Farmer Name)</div>
         <input 
           style={{ ...s.input, marginTop: 6 }} 
-          placeholder="Enter Lot ID or Gatepass Number..." 
+          placeholder="Search Lot, GP No, Farmer Name..." 
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
         {q !== "" && (
-          <div style={{ marginTop: 10, maxHeight: 220, overflowY: "auto" }}>
+          <div style={{ marginTop: 10, maxHeight: 250, overflowY: "auto" }}>
             {filteredPurchases.length === 0 && filteredDispatches.length === 0 && (
-              <div style={{ fontSize: 13, color: clr.muted, textAlign: "center", padding: 8 }}>No history records match query.</div>
+              <div style={{ fontSize: 13, color: clr.muted, textAlign: "center", padding: 8 }}>Koi record nahi mila.</div>
             )}
+            
             {filteredPurchases.map(p => (
-              <div key={p.id} style={{ background: clr.card2, padding: 8, borderRadius: 6, marginBottom: 6, fontSize: 13 }}>
-                <span style={{ color: clr.accent, fontWeight: 700 }}>📥 Lot: {p.lot_id}</span> | Farmer: {p.farmer_name} | Total Bags: {p.manual_bags} | Date: {p.date}
+              <div 
+                key={p.id} 
+                onClick={() => openFullLifecycle("purchase", p)}
+                style={{ background: clr.card2, padding: 10, borderRadius: 8, marginBottom: 6, fontSize: 13, cursor: "pointer", border: `1px solid ${clr.accent}44` }}
+              >
+                <div style={s.rowBetween}>
+                  <span style={{ color: clr.accent, fontWeight: 700 }}>📥 Lot: {p.lot_id}</span>
+                  <span style={{ fontSize: 11, color: clr.muted }}>Click for details ➔</span>
+                </div>
+                <div>Farmer: <strong>{p.farmer_name}</strong> | Bags: {p.manual_bags} | Date: {p.date}</div>
               </div>
             ))}
+
             {filteredDispatches.map(d => (
-              <div key={d.id} style={{ background: clr.card2, padding: 8, borderRadius: 6, marginBottom: 6, fontSize: 13 }}>
-                <span style={{ color: clr.blue, fontWeight: 700 }}>📤 GP: {d.gatepass_id}</span> | {d.vehicle_number} | Sale: ₹{fmt(d.total_mandi_sale_amount || 0)}
-                {d.lot_details?.map((ld, lIdx) => (
-                  <div key={lIdx} style={{ fontSize: 12, color: clr.muted, marginLeft: 8 }}>• Loaded {ld.purchase_bags} Bags from Lot {ld.lot_number}</div>
-                ))}
+              <div 
+                key={d.id} 
+                onClick={() => openFullLifecycle("dispatch", d)}
+                style={{ background: clr.card2, padding: 10, borderRadius: 8, marginBottom: 6, fontSize: 13, cursor: "pointer", border: `1px solid ${clr.blue}44` }}
+              >
+                <div style={s.rowBetween}>
+                  <span style={{ color: clr.blue, fontWeight: 700 }}>📤 GP: {d.gatepass_id}</span>
+                  <span style={{ fontSize: 11, color: clr.muted }}>Click for details ➔</span>
+                </div>
+                <div>Vehicle: <strong>{d.vehicle_number}</strong> | Sale: ₹{fmt(d.total_mandi_sale_amount || 0)}</div>
               </div>
             ))}
           </div>
@@ -202,6 +242,78 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis }) => {
           <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${clr.border}`, paddingTop: 6 }}><span style={{ fontWeight: 600 }}>Pending Due:</span><strong style={{ color: clr.orange }}>₹{fmt(pendingDue)}</strong></div>
         </div>
       </div>
+
+      {/* FULL LIFECYCLE MODAL */}
+      <Modal open={!!selectedDetail} onClose={() => setSelectedDetail(null)} title="🔍 Complete Batch Lifecycle Journey">
+        {selectedDetail && (
+          <div style={{ fontSize: 14 }}>
+            {/* Purchase Details */}
+            <div style={{ ...s.card2, borderLeft: `4px solid ${clr.accent}`, marginBottom: 10 }}>
+              <div style={{ fontWeight: 800, color: clr.accent, marginBottom: 6 }}>📥 1. PURCHASE DETAILS</div>
+              {selectedDetail.purchases.length === 0 ? (
+                <div style={{ color: clr.muted, fontSize: 13 }}>No direct purchase record linked.</div>
+              ) : (
+                selectedDetail.purchases.map(p => (
+                  <div key={p.id} style={{ fontSize: 13, lineHeight: "1.6" }}>
+                    <div>• <strong>Lot ID:</strong> {p.lot_id}</div>
+                    <div>• <strong>Farmer:</strong> {p.farmer_name}</div>
+                    <div>• <strong>Variety:</strong> {varieties.find(v => v.id === p.variety_id)?.name || "N/A"}</div>
+                    <div>• <strong>Grading:</strong> {gradings.find(g => g.id === p.grading_id)?.name || "N/A"}</div>
+                    <div>• <strong>Total Bags / Wt:</strong> {p.manual_bags} Bags ({p.total_weight} kg)</div>
+                    <div>• <strong>Rate / Bag:</strong> ₹{p.rate_per_bag}</div>
+                    <div>• <strong>Purchase Cost:</strong> <span style={{ color: clr.green, fontWeight: 700 }}>₹{fmt(p.total_cost)}</span></div>
+                    <div>• <strong>Cold Storage:</strong> {coldStorages.find(c => c.id === p.cold_storage_id)?.name || "N/A"}</div>
+                    <div>• <strong>Date:</strong> {p.date}</div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Dispatch Logistics */}
+            <div style={{ ...s.card2, borderLeft: `4px solid ${clr.blue}`, marginBottom: 10 }}>
+              <div style={{ fontWeight: 800, color: clr.blue, marginBottom: 6 }}>📤 2. DISPATCH & LOGISTICS</div>
+              {selectedDetail.dispatches.length === 0 ? (
+                <div style={{ color: clr.orange, fontSize: 13 }}>Abhi tak dispatch nahi hua hai (In Stock).</div>
+              ) : (
+                selectedDetail.dispatches.map(d => (
+                  <div key={d.id} style={{ fontSize: 13, lineHeight: "1.6", borderBottom: `1px dashed ${clr.border}`, paddingBottom: 6, marginBottom: 6 }}>
+                    <div>• <strong>Gatepass ID:</strong> {d.gatepass_id}</div>
+                    <div>• <strong>Vehicle No:</strong> {d.vehicle_number}</div>
+                    <div>• <strong>Destination Party:</strong> {parties.find(pa => pa.id === d.destination_party_id)?.name || "N/A"}</div>
+                    <div>• <strong>Target Mandi:</strong> {mandis.find(m => m.id === d.mandi_id)?.name || "N/A"}</div>
+                    <div>• <strong>Date:</strong> {d.date}</div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Sale Realization */}
+            <div style={{ ...s.card2, borderLeft: `4px solid ${clr.green}` }}>
+              <div style={{ fontWeight: 800, color: clr.green, marginBottom: 6 }}>💰 3. MANDI SALE & MARGIN</div>
+              {selectedDetail.dispatches.length === 0 || !selectedDetail.dispatches.some(d => d.total_mandi_sale_amount > 0) ? (
+                <div style={{ color: clr.muted, fontSize: 13 }}>Mandi sale register nahi hui hai.</div>
+              ) : (
+                selectedDetail.dispatches.filter(d => d.total_mandi_sale_amount > 0).map(d => {
+                  const lotCost = (d.lot_details || []).reduce((sum, i) => sum + (parseFloat(i.purchase_lot_value) || 0), 0);
+                  const saleAmt = parseFloat(d.total_mandi_sale_amount) || 0;
+                  const expAmt = parseFloat(d.total_expenses) || 0;
+                  const margin = saleAmt - lotCost - expAmt;
+                  return (
+                    <div key={d.id} style={{ fontSize: 13, lineHeight: "1.6" }}>
+                      <div>• <strong>Mandi Sale Received:</strong> <span style={{ color: clr.green, fontWeight: 700 }}>₹{fmt(saleAmt)}</span></div>
+                      <div>• <strong>Mandi Rec. Weight:</strong> {d.total_mandi_weight_received} kg</div>
+                      <div>• <strong>Expenses:</strong> ₹{fmt(expAmt)}</div>
+                      <div style={{ borderTop: `1px solid ${clr.border}`, marginTop: 4, paddingTop: 4 }}>
+                        • <strong>Net Profit / Loss:</strong> <span style={{ fontWeight: 800, color: margin >= 0 ? clr.green : clr.red }}>₹{fmt(margin)}</span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };
@@ -219,9 +331,9 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
     if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag || !form.total_weight) {
       return alert("❌ Fill all required fields!");
     }
-    const ratePerKg = parseFloat(form.rate_per_bag) / 52.5;
-    const currentTotalCost = parseFloat(form.total_weight) * ratePerKg;
-    const payload = { ...form, std_bags: (parseFloat(form.total_weight) / 52.5).toFixed(2), total_cost: currentTotalCost };
+    const stdBags = (parseFloat(form.total_weight) / 52.5);
+    const currentTotalCost = stdBags * parseFloat(form.rate_per_bag);
+    const payload = { ...form, std_bags: stdBags.toFixed(2), total_cost: currentTotalCost };
 
     if (editItem) {
       const success = await opsP.editItem(editItem.id, payload);
@@ -367,9 +479,9 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
       </div>
 
       {dispatches.map(d => {
-        const totalBagsInTruck = d.lot_details?.reduce((acc, curr) => acc + (parseInt(curr.purchase_bags) || 0), 0) || 0;
-        const totalWeightInTruck = d.lot_details?.reduce((acc, curr) => acc + (parseFloat(curr.purchase_weight_kg) || 0), 0) || 0;
-        const totalValueInTruck = d.lot_details?.reduce((acc, curr) => acc + (parseFloat(curr.purchase_lot_value) || 0), 0) || 0;
+        const totalBagsInTruck = (d.lot_details || []).reduce((acc, curr) => acc + (parseInt(curr.purchase_bags) || 0), 0);
+        const totalWeightInTruck = (d.lot_details || []).reduce((acc, curr) => acc + (parseFloat(curr.purchase_weight_kg) || 0), 0);
+        const totalValueInTruck = (d.lot_details || []).reduce((acc, curr) => acc + (parseFloat(curr.purchase_lot_value) || 0), 0);
 
         return (
           <div key={d.id} style={s.card}>
@@ -401,12 +513,12 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
             <div><strong>Party Destination:</strong> {parties.find(p => p.id === popData.destination_party_id)?.name || "N/A"}</div>
             <div><strong>Target Mandi:</strong> {mandis.find(m => m.id === popData.mandi_id)?.name || "N/A"}</div>
             <div style={{ background: clr.card2, padding: 8, borderRadius: 6, marginTop: 8, fontSize: "13px" }}>
-              <div><strong>📦 Total Dispatch Weight:</strong> {popData.total_dispatch_weight || popData.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0)} kg</div>
-              <div><strong>💰 Total Loaded Value:</strong> <span style={{ color: clr.accent, fontWeight: 700 }}>₹{fmt(popData.total_purchase_amount || popData.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0))}</span></div>
+              <div><strong>📦 Total Dispatch Weight:</strong> {popData.total_dispatch_weight || (popData.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0)} kg</div>
+              <div><strong>💰 Total Loaded Value:</strong> <span style={{ color: clr.accent, fontWeight: 700 }}>₹{fmt(popData.total_purchase_amount || (popData.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0))}</span></div>
             </div>
             <div style={s.divider} />
             <div style={{ fontWeight: 700, color: clr.accent, marginBottom: 6 }}>LOTS LOADED IN TRUCK:</div>
-            {popData.lot_details?.map((l, i) => (
+            {(popData.lot_details || []).map((l, i) => (
               <div key={i} style={{ background: clr.card2, padding: 8, borderRadius: 6, marginBottom: 6, fontSize: "13px" }}>
                 <div>• <strong>Lot ID:</strong> {l.lot_number}</div>
                 <div>• <strong>Variety:</strong> {l.variety_name || "N/A"} | <strong>Grading:</strong> {l.grading_name || "N/A"}</div>
@@ -449,9 +561,10 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
   );
 };
 
-// ===== MANDI SALE SCREEN =====
+// ===== MANDI SALE SCREEN (WITH EDIT & DELETE ENABLED) =====
 const SaleScreen = ({ dispatches, opsD }) => {
   const [showForm, setShowForm] = useState(false);
+  const [editMode, setEditMode] = useState(false);
   const [selectedDispatchId, setSelectedDispatchId] = useState("");
   const [form, setForm] = useState({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "", total_expenses: 0, original_load_value: 0 });
 
@@ -459,12 +572,42 @@ const SaleScreen = ({ dispatches, opsD }) => {
     setSelectedDispatchId(dispatchId);
     const targetDispatch = dispatches.find(d => d.id === dispatchId);
     if (targetDispatch) {
-      const dispatchWeight = targetDispatch.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0) || 0;
-      const dispatchCostValue = targetDispatch.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0) || 0;
+      const dispatchWeight = targetDispatch.total_mandi_weight_received || (targetDispatch.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0);
+      const dispatchCostValue = (targetDispatch.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0);
       setForm({
-        id: targetDispatch.id, gatepass_id: targetDispatch.gatepass_id,
-        total_mandi_weight_received: dispatchWeight, total_mandi_sale_amount: "", total_expenses: 0, original_load_value: dispatchCostValue
+        id: targetDispatch.id, 
+        gatepass_id: targetDispatch.gatepass_id,
+        total_mandi_weight_received: dispatchWeight, 
+        total_mandi_sale_amount: targetDispatch.total_mandi_sale_amount || "", 
+        total_expenses: targetDispatch.total_expenses || 0, 
+        original_load_value: dispatchCostValue
       });
+    }
+  };
+
+  const handleEditOpen = (dispatch) => {
+    setEditMode(true);
+    setSelectedDispatchId(dispatch.id);
+    const dispatchCostValue = (dispatch.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0);
+    setForm({
+      id: dispatch.id,
+      gatepass_id: dispatch.gatepass_id,
+      total_mandi_weight_received: dispatch.total_mandi_weight_received || 0,
+      total_mandi_sale_amount: dispatch.total_mandi_sale_amount || 0,
+      total_expenses: dispatch.total_expenses || 0,
+      original_load_value: dispatchCostValue
+    });
+    setShowForm(true);
+  };
+
+  const handleDeleteMandiSale = async (dispatchId, gpId) => {
+    if (window.confirm(`🚨 Kya aap Gatepass (${gpId}) ki Mandi Sale entry delete/reset karna chahte hain?`)) {
+      const resetPayload = {
+        total_mandi_weight_received: 0,
+        total_mandi_sale_amount: 0,
+        total_expenses: 0
+      };
+      await opsD.editItem(dispatchId, resetPayload);
     }
   };
 
@@ -478,42 +621,51 @@ const SaleScreen = ({ dispatches, opsD }) => {
       total_expenses: parseFloat(form.total_expenses) || 0
     };
     const success = await opsD.editItem(form.id, finalPayload);
-    if (success) { setShowForm(false); setSelectedDispatchId(""); }
+    if (success) { setShowForm(false); setSelectedDispatchId(""); setEditMode(false); }
   };
 
   return (
     <div style={s.content}>
       <div style={{ ...s.rowBetween, marginBottom: 14 }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>Mandi Sales Book</span>
-        <button onClick={() => { setSelectedDispatchId(""); setForm({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "", total_expenses: 0, original_load_value: 0 }); setShowForm(true); }} style={s.btn(clr.green, "#fff")}>New Mandi Sale Entry</button>
+        <button onClick={() => { setEditMode(false); setSelectedDispatchId(""); setForm({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "", total_expenses: 0, original_load_value: 0 }); setShowForm(true); }} style={s.btn(clr.green, "#fff")}>New Mandi Sale Entry</button>
       </div>
 
       {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(sx => {
-        const loadedValue = sx.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0) || 0;
+        const loadedValue = (sx.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0);
         const currentExp = parseFloat(sx.total_expenses) || 0;
         return (
           <div key={sx.id} style={s.card}>
             <div style={s.rowBetween}><Badge v={`GP Link: ${sx.gatepass_id}`} color={clr.green} /><strong>Sale: ₹{fmt(sx.total_mandi_sale_amount)}</strong></div>
-            <div style={{ fontSize: 13, color: clr.muted, marginTop: 6, background: "#0001", padding: 6, borderRadius: 6 }}>
+            <div style={{ fontSize: 13, color: clr.muted, marginTop: 6, background: "#0001", padding: 8, borderRadius: 6 }}>
               <div>Mandi Wt Received: <strong>{sx.total_mandi_weight_received} kg</strong></div>
               <div>Expenses Registered: <strong style={{ color: clr.orange }}>₹{fmt(currentExp)}</strong></div>
               <div style={{ marginTop: 2, color: clr.accent }}>Original Truck Loaded Value: <strong>₹{fmt(loadedValue)}</strong></div>
+            </div>
+            
+            {/* EDIT & DELETE ACTION BUTTONS */}
+            <div style={{ ...s.row, marginTop: 10 }}>
+              <button onClick={() => handleEditOpen(sx)} style={{ ...s.btnSm(), flex: 1 }}><Icon name="edit" size={12} /> Edit Sale</button>
+              <button onClick={() => handleDeleteMandiSale(sx.id, sx.gatepass_id)} style={{ ...s.btnSm(), flex: 1, color: clr.red }}><Icon name="trash" size={12} color={clr.red} /> Delete Sale</button>
             </div>
           </div>
         );
       })}
 
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Record Simple Mandi Sale">
-        <select style={s.select} value={selectedDispatchId} onChange={e => loadDispatchData(e.target.value)}>
-          <option value="">Select Dispatched GP</option>
-          {dispatches.filter(d => !d.total_mandi_sale_amount || d.total_mandi_sale_amount === 0).map(d => (
-            <option key={d.id} value={d.id}>{d.gatepass_id} ({d.vehicle_number})</option>
-          ))}
-        </select>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title={editMode ? "Edit Mandi Sale Entry" : "Record Simple Mandi Sale"}>
+        {!editMode && (
+          <select style={s.select} value={selectedDispatchId} onChange={e => loadDispatchData(e.target.value)}>
+            <option value="">Select Dispatched GP</option>
+            {dispatches.filter(d => !d.total_mandi_sale_amount || d.total_mandi_sale_amount === 0).map(d => (
+              <option key={d.id} value={d.id}>{d.gatepass_id} ({d.vehicle_number})</option>
+            ))}
+          </select>
+        )}
+
         {form.gatepass_id && (
           <>
             <div style={{ background: clr.card2, padding: 10, borderRadius: 8, margin: "12px 0", fontSize: "13px", borderLeft: `3px solid ${clr.accent}` }}>
-              ⚠️ **Truck History Monitor:** Is vehicle mein total **₹{fmt(form.original_load_value)}** ki cost ka maal load kiya gaya tha.
+              ⚠️ **Truck History Monitor:** GP ({form.gatepass_id}) - Loaded Cost Value **₹{fmt(form.original_load_value)}**.
             </div>
             <Field label="Total Mandi Received Weight (kg)">
               <input type="number" style={s.input} value={form.total_mandi_weight_received} onChange={e => setForm({ ...form, total_mandi_weight_received: e.target.value })} />
@@ -524,7 +676,7 @@ const SaleScreen = ({ dispatches, opsD }) => {
             <Field label="All Expenses (₹)">
               <input type="number" style={s.input} placeholder="Enter Mandi Expenses / Freight..." value={form.total_expenses} onChange={e => setForm({ ...form, total_expenses: e.target.value })} />
             </Field>
-            <button onClick={saveMandiInvoice} style={{ ...s.btn(clr.green, "#fff"), marginTop: 12 }}>Save Mandi Sale</button>
+            <button onClick={saveMandiInvoice} style={{ ...s.btn(clr.green, "#fff"), marginTop: 12 }}>{editMode ? "Update Mandi Sale" : "Save Mandi Sale"}</button>
           </>
         )}
       </Modal>
@@ -764,7 +916,7 @@ const PnLScreen = ({ dispatches, parties, mandis }) => {
       {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(sale => {
         const partyName = parties.find(p => p.id === sale.destination_party_id)?.name || "Unknown";
         const mandiName = mandis.find(m => m.id === sale.mandi_id)?.name || "Unknown";
-        const totalPurchaseCost = sale.lot_details?.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0) || 0;
+        const totalPurchaseCost = (sale.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0);
         const currentExp = parseFloat(sale.total_expenses) || 0;
         const netMargin = sale.total_mandi_sale_amount - totalPurchaseCost - currentExp;
 
@@ -868,7 +1020,7 @@ export default function App() {
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
-      {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} payments={payments.data} mandis={mandis.data} />}
+      {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} payments={payments.data} mandis={mandis.data} parties={parties.data} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
       {activeTab === "purchase" && <PurchaseScreen purchases={purchases.data} dispatches={dispatches.data} opsP={purchases} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
       {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} varieties={varieties.data} gradings={gradings.data} />}
       {activeTab === "sale" && <SaleScreen dispatches={dispatches.data} opsD={dispatches} />}
