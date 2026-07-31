@@ -57,7 +57,7 @@ const useSupabaseTable = (tableName) => {
 };
 
 const uid = () => Math.random().toString(36).slice(2, 9).toUpperCase();
-const fmt = (n, d = 0) => (isNaN(n) ? "0" : Number(n).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d }));
+const fmt = (n, d = 0) => (isNaN(n) || n === null || n === undefined ? "0" : Number(n).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d }));
 const today = () => new Date().toISOString().slice(0, 10);
 
 const clr = { 
@@ -100,7 +100,7 @@ const Icon = ({ name, size = 18, color = clr.text }) => {
     edit: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
     info: "M12 16v-4m0-4h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z"
   };
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icons[name]} /></svg>;
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={icons[name] || icons.info} /></svg>;
 };
 
 const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div style={s.label}>{label}</div>{children}</div>;
@@ -331,8 +331,10 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
     if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag || !form.total_weight) {
       return alert("❌ Fill all required fields!");
     }
-    const stdBags = (parseFloat(form.total_weight) / 52.5);
-    const currentTotalCost = stdBags * parseFloat(form.rate_per_bag);
+    const totWt = parseFloat(form.total_weight) || 0;
+    const rateBag = parseFloat(form.rate_per_bag) || 0;
+    const stdBags = totWt / 52.5;
+    const currentTotalCost = stdBags * rateBag;
     const payload = { ...form, std_bags: stdBags.toFixed(2), total_cost: currentTotalCost };
 
     if (editItem) {
@@ -391,7 +393,7 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
       })}
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Purchase Entry Form">
-        <Field label="Lot ID"><input style={s.input} value={form.lot_id} onChange={e => setForm({ ...form, lot_id: e.target.value })} disabled={editItem} /></Field>
+        <Field label="Lot ID"><input style={s.input} value={form.lot_id} onChange={e => setForm({ ...form, lot_id: e.target.value })} disabled={!!editItem} /></Field>
         <Field label="Farmer Name"><input style={s.input} value={form.farmer_name} onChange={e => setForm({ ...form, farmer_name: e.target.value })} /></Field>
         <Field label="Variety"><select style={s.select} value={form.variety_id} onChange={e => setForm({ ...form, variety_id: e.target.value })}><option value="">Select Variety</option>{varieties.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
         <Field label="Grading"><select style={s.select} value={form.grading_id} onChange={e => setForm({ ...form, grading_id: e.target.value })}><option value="">Select Grading</option>{gradings.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
@@ -424,8 +426,8 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
     if (!matchedPurchase) return alert("❌ Lot Selection Missing!");
     
     const remaining = getRemainingBags(matchedPurchase, dispatches);
-    const bagsToLoad = parseInt(itemForm.purchase_bags); 
-    const manualWeight = parseFloat(itemForm.purchase_weight_kg); 
+    const bagsToLoad = parseInt(itemForm.purchase_bags) || 0; 
+    const manualWeight = parseFloat(itemForm.purchase_weight_kg) || 0; 
 
     if (bagsToLoad > remaining) return alert(`Only ${remaining} bags available in this lot!`);
     
@@ -449,8 +451,8 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
       return { 
         ...p, 
         lot_details: updatedDetails,
-        total_purchase_amount: updatedDetails.reduce((s, item) => s + item.purchase_lot_value, 0),
-        total_dispatch_weight: updatedDetails.reduce((s, item) => s + item.purchase_weight_kg, 0)
+        total_purchase_amount: updatedDetails.reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0),
+        total_dispatch_weight: updatedDetails.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0)
       };
     });
     setItemForm({ lot_number: "", purchase_bags: "", purchase_weight_kg: "" });
