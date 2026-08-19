@@ -106,8 +106,8 @@ const Icon = ({ name, size = 18, color = clr.text }) => {
 const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div style={s.label}>{label}</div>{children}</div>;
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 14, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
 
-// ===== DISPATCH ANALYTICS & PARTYWISE BREAKDOWN WITH PROFIT & BIKRI =====
-const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases, payments, coldPayments }) => {
+// ===== DISPATCH ANALYTICS & PARTYWISE / COLD BREAKDOWN WITH NET PROFIT & BIKRI =====
+const DispatchAnalyticsScreen = ({ dispatches = [], parties = [], coldStorages = [], purchases = [], payments = [], coldPayments = [] }) => {
   
   // 1. Calculate Party-wise Dispatches, Loaded Bags, Bikri, Profit & Due
   const partyWiseSummary = parties.map(party => {
@@ -135,7 +135,7 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
     const partyGps = partyDispatches.map(d => d.gatepass_id);
     const totalPaymentsRec = payments.filter(p => partyGps.includes(p.gatepass_id)).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
 
-    // Calculations
+    // Dynamic Net Profit & Dues Formula
     const partyNetProfit = totalSaleReceived - totalDispatchValue - totalMandiExpenses;
     const pendingDue = totalSaleReceived - totalPaymentsRec;
 
@@ -267,7 +267,7 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
                 <div style={{ fontWeight: 800, color: p.pendingDue > 0 ? clr.red : clr.green }}>₹{fmt(p.pendingDue)}</div>
               </div>
 
-              {/* PROFIT / LOSS BAR */}
+              {/* NET PROFIT BAR */}
               <div style={{ gridColumn: "1 / span 2", background: clr.card2, padding: 8, borderRadius: 6, marginTop: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: clr.muted, fontWeight: 700 }}>NET PROFIT FROM PARTY:</span>
                 <span style={{ fontSize: 15, fontWeight: 900, color: p.partyNetProfit >= 0 ? clr.green : clr.red }}>
@@ -337,7 +337,7 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
 };
 
 // ===== DASHBOARD SCREEN WITH FULL LIFECYCLE SEARCH =====
-const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, varieties, gradings, coldStorages }) => {
+const DashboardScreen = ({ purchases = [], dispatches = [], payments = [], mandis = [], parties = [], varieties = [], gradings = [], coldStorages = [] }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDetail, setSelectedDetail] = useState(null);
 
@@ -358,8 +358,36 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
   const totalMandiExpenses = soldDispatches.reduce((sum, d) => sum + (parseFloat(d.total_expenses) || 0), 0);
   const dynamicNetProfit = totalMandiRevenue - totalSoldPurchaseCost - totalMandiExpenses;
 
+  const q = searchQuery.trim().toLowerCase();
+  
+  const filteredPurchases = q === "" ? [] : purchases.filter(p => 
+    p.lot_id?.toLowerCase().includes(q) || p.farmer_name?.toLowerCase().includes(q)
+  );
+
+  const filteredDispatches = q === "" ? [] : dispatches.filter(d => 
+    d.gatepass_id?.toLowerCase().includes(q) || 
+    (d.lot_details || []).some(l => l.lot_number?.toLowerCase().includes(q))
+  );
+
+  const openFullLifecycle = (type, item) => {
+    let matchedPurchases = [];
+    let matchedDispatches = [];
+
+    if (type === "purchase") {
+      matchedPurchases = [item];
+      matchedDispatches = dispatches.filter(d => (d.lot_details || []).some(l => l.lot_number === item.lot_id));
+    } else if (type === "dispatch") {
+      matchedDispatches = [item];
+      const lotIdsInDispatch = (item.lot_details || []).map(l => l.lot_number);
+      matchedPurchases = purchases.filter(p => lotIdsInDispatch.includes(p.lot_id));
+    }
+
+    setSelectedDetail({ type, primary: item, purchases: matchedPurchases, dispatches: matchedDispatches });
+  };
+
   return (
     <div style={s.content}>
+      {/* NET PROFIT METRIC CARD */}
       <div style={{ ...s.card, background: dynamicNetProfit >= 0 ? clr.green + "1a" : clr.red + "1a", borderColor: dynamicNetProfit >= 0 ? clr.green : clr.red, marginBottom: 14 }}>
         <div style={s.rowBetween}>
           <span style={{ ...s.label, fontSize: "13px", color: dynamicNetProfit >= 0 ? clr.green : clr.red }}>📊 Realized Profit & Loss (Live)</span>
@@ -377,8 +405,137 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
           </div>
         </div>
       </div>
+
+      {/* QUICK INVENTORY STATS */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+        <div style={s.card2}>
+          <div style={s.label}>Total Purchased Bags</div>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>{fmt(totalBagsPurchased)}</div>
+          <div style={{ fontSize: 11, color: clr.muted, marginTop: 2 }}>In Stock: {fmt(totalBagsRemaining)}</div>
+        </div>
+        <div style={s.card2}>
+          <div style={s.label}>Dispatched Bags</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: clr.orange }}>{fmt(totalBagsDispatched)}</div>
+          <div style={{ fontSize: 11, color: clr.muted, marginTop: 2 }}>Active Lots: {activeLots} | Closed: {closedLots}</div>
+        </div>
+      </div>
+
+      {/* SEARCH BAR */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={s.label}>🔍 Search Lot ID or Gatepass</div>
+        <input 
+          style={s.input} 
+          placeholder="Type Lot ID (e.g., LOT-101) or Gatepass ID..." 
+          value={searchQuery} 
+          onChange={(e) => setSearchQuery(e.target.value)} 
+        />
+      </div>
+
+      {/* SEARCH RESULTS LIST */}
+      {q !== "" && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ ...s.label, color: clr.accent, marginBottom: 6 }}>Search Results ({filteredPurchases.length + filteredDispatches.length})</div>
+          {filteredPurchases.map(p => (
+            <div key={p.id} onClick={() => openFullLifecycle("purchase", p)} style={{ ...s.card, cursor: "pointer", borderLeft: `4px solid ${clr.blue}` }}>
+              <div style={s.rowBetween}>
+                <strong>Lot ID: {p.lot_id}</strong>
+                <Badge v={`${p.manual_bags} Bags`} color={clr.blue} />
+              </div>
+              <div style={{ fontSize: 12, color: clr.muted, marginTop: 4 }}>Farmer: {p.farmer_name || "N/A"}</div>
+            </div>
+          ))}
+          {filteredDispatches.map(d => (
+            <div key={d.id} onClick={() => openFullLifecycle("dispatch", d)} style={{ ...s.card, cursor: "pointer", borderLeft: `4px solid ${clr.purple}` }}>
+              <div style={s.rowBetween}>
+                <strong>Gatepass: {d.gatepass_id}</strong>
+                <Badge v={`${d.vehicle_number}`} color={clr.purple} />
+              </div>
+              <div style={{ fontSize: 12, color: clr.muted, marginTop: 4 }}>Date: {d.date}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* FULL LIFECYCLE MODAL */}
+      <Modal open={!!selectedDetail} onClose={() => setSelectedDetail(null)} title="🔄 Full Lifecycle View">
+        {selectedDetail && (
+          <div>
+            <div style={{ ...s.label, color: clr.accent }}>Primary Selected Record</div>
+            <div style={s.card2}>
+              <pre style={{ margin: 0, fontSize: 12, color: clr.text, whiteSpace: "pre-wrap" }}>
+                {JSON.stringify(selectedDetail.primary, null, 2)}
+              </pre>
+            </div>
+
+            <div style={{ ...s.label, color: clr.blue, marginTop: 10 }}>Associated Purchases ({selectedDetail.purchases.length})</div>
+            {selectedDetail.purchases.map(p => (
+              <div key={p.id} style={{ ...s.card, fontSize: 12 }}>
+                <div><strong>Lot: {p.lot_id}</strong> | Bags: {p.manual_bags} | Rate: ₹{p.rate_per_bag}</div>
+                <div style={{ color: clr.muted }}>Farmer: {p.farmer_name}</div>
+              </div>
+            ))}
+
+            <div style={{ ...s.label, color: clr.purple, marginTop: 10 }}>Associated Dispatches ({selectedDetail.dispatches.length})</div>
+            {selectedDetail.dispatches.map(d => (
+              <div key={d.id} style={{ ...s.card, fontSize: 12 }}>
+                <div><strong>GP: {d.gatepass_id}</strong> | Truck: {d.vehicle_number}</div>
+                <div style={{ color: clr.muted }}>Sale Amt: ₹{fmt(d.total_mandi_sale_amount)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };
 
-export default DispatchAnalyticsScreen;
+// ===== MAIN ROOT COMPONENT WITH NAVIGATION =====
+export default function App() {
+  const [activeTab, setActiveTab] = useState("analytics");
+
+  const purchasesState = useSupabaseTable("purchases");
+  const dispatchesState = useSupabaseTable("dispatches");
+  const paymentsState = useSupabaseTable("payments");
+  const partiesState = useSupabaseTable("parties");
+  const coldStoragesState = useSupabaseTable("cold_storages");
+  const coldPaymentsState = useSupabaseTable("cold_payments");
+
+  return (
+    <div style={s.screen}>
+      <div style={s.header}>
+        <div style={{ fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 Cold Storage & Mandi Portal</div>
+      </div>
+
+      {activeTab === "dashboard" && (
+        <DashboardScreen 
+          purchases={purchasesState.data}
+          dispatches={dispatchesState.data}
+          payments={paymentsState.data}
+          parties={partiesState.data}
+          coldStorages={coldStoragesState.data}
+        />
+      )}
+
+      {activeTab === "analytics" && (
+        <DispatchAnalyticsScreen 
+          dispatches={dispatchesState.data}
+          parties={partiesState.data}
+          coldStorages={coldStoragesState.data}
+          purchases={purchasesState.data}
+          payments={paymentsState.data}
+          coldPayments={coldPaymentsState.data}
+        />
+      )}
+
+      {/* BOTTOM NAVIGATION BAR */}
+      <div style={s.navBar}>
+        <button style={s.navItem(activeTab === "dashboard")} onClick={() => setActiveTab("dashboard")}>
+          📊 <span>Dashboard</span>
+        </button>
+        <button style={s.navItem(activeTab === "analytics")} onClick={() => setActiveTab("analytics")}>
+          🚚 <span>Analytics & Profit</span>
+        </button>
+      </div>
+    </div>
+  );
+}
