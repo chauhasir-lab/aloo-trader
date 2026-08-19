@@ -106,13 +106,14 @@ const Icon = ({ name, size = 18, color = clr.text }) => {
 const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div style={s.label}>{label}</div>{children}</div>;
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 14, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
 
-// ===== NEW SCREEN: DISPATCH ANALYTICS & PARTYWISE / COLD BREAKDOWN =====
+// ===== NEW SCREEN: DISPATCH ANALYTICS & PARTYWISE / COLD BREAKDOWN (UPDATED & FIXED) =====
 const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases, payments, coldPayments }) => {
   // 1. Calculate Party-wise Dispatches, Sale Received & Due
+  // FIX: Explicitly picking Gate Pass Dispatched Lot Cost Value (Not Sale Value)
   const partyWiseSummary = parties.map(party => {
     const partyDispatches = dispatches.filter(d => d.destination_party_id === party.id);
     
-    // Total Dispatch Cost Value
+    // STRICT FIX: Total Dispatched Lot Cost Value from Gatepass
     const totalDispatchValue = partyDispatches.reduce((sum, d) => {
       const dispatchCost = (d.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0);
       return sum + dispatchCost;
@@ -138,24 +139,43 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
     };
   }).filter(p => p.dispatchCount > 0 || p.totalDispatchValue > 0);
 
-  // 2. Calculate Cold Storage-wise Dispatches, Amount Paid Back & Due
+  // 2. Calculate Cold Storage-wise Dispatches, GP Details, Amount Paid Back & Due
+  // FIX: Linked with Gatepass (GP Number & Vehicle Number) Loaded Material Value
   const coldWiseSummary = coldStorages.map(cs => {
-    // Find all dispatches containing lots originating from this cold storage
     let totalColdDispatchValue = 0;
     let totalBagsDispatched = 0;
+    let dispatchedGPs = [];
 
     dispatches.forEach(d => {
+      let gpColdValue = 0;
+      let gpColdBags = 0;
+
       (d.lot_details || []).forEach(l => {
         const matchedPurchase = purchases.find(p => p.lot_id === l.lot_number);
         if (matchedPurchase && matchedPurchase.cold_storage_id === cs.id) {
-          totalColdDispatchValue += parseFloat(l.purchase_lot_value) || 0;
-          totalBagsDispatched += parseFloat(l.purchase_bags) || 0;
+          const val = parseFloat(l.purchase_lot_value) || 0;
+          const bags = parseFloat(l.purchase_bags) || 0;
+          gpColdValue += val;
+          gpColdBags += bags;
+          totalColdDispatchValue += val;
+          totalBagsDispatched += bags;
         }
       });
+
+      if (gpColdValue > 0) {
+        dispatchedGPs.push({
+          gatepass_id: d.gatepass_id,
+          vehicle_number: d.vehicle_number,
+          date: d.date,
+          bags: gpColdBags,
+          gp_loaded_value: gpColdValue
+        });
+      }
     });
 
     // Total Paid Back to Cold Storage
-    const totalPaidBack = coldPayments.filter(cp => cp.cold_storage_id === cs.id).reduce((sum, cp) => sum + (parseFloat(cp.amount) || 0), 0);
+    const coldPaidLogs = coldPayments.filter(cp => cp.cold_storage_id === cs.id);
+    const totalPaidBack = coldPaidLogs.reduce((sum, cp) => sum + (parseFloat(cp.amount) || 0), 0);
     const duePayable = totalColdDispatchValue - totalPaidBack;
 
     return {
@@ -163,10 +183,12 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
       coldName: cs.name,
       totalColdDispatchValue,
       totalBagsDispatched,
+      dispatchedGPs,
+      coldPaidLogs,
       totalPaidBack,
       duePayable
     };
-  }).filter(c => c.totalColdDispatchValue > 0 || c.totalPaidBack > 0);
+  }).filter(c => c.totalColdDispatchValue > 0 || c.totalPaidBack > 0 || c.dispatchedGPs.length > 0);
 
   const grandDispatchValue = partyWiseSummary.reduce((sum, p) => sum + p.totalDispatchValue, 0);
   const grandSaleReceived = partyWiseSummary.reduce((sum, p) => sum + p.totalSaleReceived, 0);
@@ -180,7 +202,7 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
       {/* OVERALL TOP METRICS */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
         <div style={{ ...s.card2, background: clr.blue + "18", border: `1px solid ${clr.blue}` }}>
-          <div style={s.label}>Total Dispatch Value</div>
+          <div style={s.label}>Total GP Dispatch Value</div>
           <div style={{ fontSize: 18, fontWeight: 900, color: clr.blue }}>₹{fmt(grandDispatchValue)}</div>
         </div>
         <div style={{ ...s.card2, background: clr.green + "18", border: `1px solid ${clr.green}` }}>
@@ -208,7 +230,7 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
             <div style={s.divider} />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
               <div>
-                <span style={{ color: clr.muted, fontSize: 11 }}>TOTAL DISPATCH VALUE</span>
+                <span style={{ color: clr.muted, fontSize: 11 }}>GP DISPATCHED COST VALUE</span>
                 <div style={{ fontWeight: 700, color: clr.blue, fontSize: 15 }}>₹{fmt(p.totalDispatchValue)}</div>
               </div>
               <div>
@@ -228,9 +250,9 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
         ))
       )}
 
-      {/* 2. COLD STORAGE-WISE DISPATCH & PAYBACK BREAKDOWN */}
+      {/* 2. COLD STORAGE-WISE DISPATCH & PAYBACK BREAKDOWN (WITH GP & VEHICLE NO) */}
       <div style={{ ...s.label, fontSize: "13px", color: clr.text, margin: "16px 0 8px 0", textTransform: "none" }}>
-        ❄️ Cold Storage-Wise Dispatch & Payback Ledger
+        ❄️ Cold Storage-Wise GP Dispatch & Payback Ledger
       </div>
 
       {coldWiseSummary.length === 0 ? (
@@ -245,9 +267,10 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
               <span style={{ fontSize: 12, color: clr.muted }}>{c.totalBagsDispatched} Bags Out</span>
             </div>
             <div style={s.divider} />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
+            
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13, marginBottom: 10 }}>
               <div>
-                <span style={{ color: clr.muted, fontSize: 11 }}>COLD DISPATCH VALUE</span>
+                <span style={{ color: clr.muted, fontSize: 11 }}>COLD DISPATCH LOADED VALUE</span>
                 <div style={{ fontWeight: 700, color: clr.orange, fontSize: 15 }}>₹{fmt(c.totalColdDispatchValue)}</div>
               </div>
               <div>
@@ -261,6 +284,22 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
                 </div>
               </div>
             </div>
+
+            {/* GP & VEHICLE DISPATCH HISTORY FOR COLD */}
+            {c.dispatchedGPs.length > 0 && (
+              <div style={{ background: clr.card2, borderRadius: 8, padding: 8, marginTop: 6 }}>
+                <div style={{ ...s.label, fontSize: "11px", color: clr.accent, marginBottom: 4 }}>🚚 Gatepass (GP) Dispatch History</div>
+                {c.dispatchedGPs.map((gp, gIdx) => (
+                  <div key={gIdx} style={{ fontSize: 12, borderBottom: gIdx !== c.dispatchedGPs.length - 1 ? `1px solid ${clr.border}` : "none", padding: "4px 0" }}>
+                    <div style={s.rowBetween}>
+                      <span><strong>GP: {gp.gatepass_id}</strong> ({gp.vehicle_number})</span>
+                      <span style={{ color: clr.orange, fontWeight: 700 }}>₹{fmt(gp.gp_loaded_value)}</span>
+                    </div>
+                    <div style={{ color: clr.muted, fontSize: 11 }}>Date: {gp.date} | Loaded: {gp.bags} Bags</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ))
       )}
@@ -967,8 +1006,8 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
   );
 };
 
-// ===== COLD STORAGE DUE & HISTORY =====
-const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPayment }) => {
+// ===== COLD STORAGE DUE & HISTORY (FIXED FOR GP VALUE & DETAILS) =====
+const ColdStorageDueScreen = ({ purchases, dispatches, coldStorages, coldPayments, opsColdPayment }) => {
   const [showPayForm, setShowPayForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [payForm, setPayForm] = useState({ cold_storage_id: "", amount: "", payment_mode: "cash", date: today() });
@@ -992,14 +1031,50 @@ const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPa
     }
   };
 
+  // STRICT FIX: Cold Storage Calculations Based on GP Dispatched Loaded Material
   const activeColdSummary = coldStorages.map(cs => {
-    const lotsAtCS = purchases.filter(p => p.cold_storage_id === cs.id);
-    const totalPurchasedCost = lotsAtCS.reduce((sum, p) => sum + (parseFloat(p.total_cost) || 0), 0);
+    let totalColdDispatchValue = 0;
+    let dispatchedGPs = [];
+
+    dispatches.forEach(d => {
+      let gpColdValue = 0;
+      let gpColdBags = 0;
+
+      (d.lot_details || []).forEach(l => {
+        const matchedPurchase = purchases.find(p => p.lot_id === l.lot_number);
+        if (matchedPurchase && matchedPurchase.cold_storage_id === cs.id) {
+          const val = parseFloat(l.purchase_lot_value) || 0;
+          const bags = parseFloat(l.purchase_bags) || 0;
+          gpColdValue += val;
+          gpColdBags += bags;
+          totalColdDispatchValue += val;
+        }
+      });
+
+      if (gpColdValue > 0) {
+        dispatchedGPs.push({
+          gatepass_id: d.gatepass_id,
+          vehicle_number: d.vehicle_number,
+          date: d.date,
+          bags: gpColdBags,
+          gp_loaded_value: gpColdValue
+        });
+      }
+    });
+
     const totalPaidToCold = coldPayments.filter(cp => cp.cold_storage_id === cs.id).reduce((sum, cp) => sum + (parseFloat(cp.amount) || 0), 0);
     const historyLogs = coldPayments.filter(cp => cp.cold_storage_id === cs.id).sort((a,b) => new Date(b.date) - new Date(a.date));
 
-    return { id: cs.id, name: cs.name, totalPurchasedCost, totalPaidToCold, remainingDue: totalPurchasedCost - totalPaidToCold, historyLogs };
-  }).filter(c => c.totalPurchasedCost > 0 || c.historyLogs.length > 0 || c.remainingDue !== 0);
+    return { 
+      id: cs.id, 
+      name: cs.name, 
+      totalColdDispatchValue, 
+      totalPaidToCold, 
+      remainingDue: totalColdDispatchValue - totalPaidToCold, 
+      dispatchedGPs,
+      historyLogs 
+    };
+  }).filter(c => c.totalColdDispatchValue > 0 || c.historyLogs.length > 0 || c.remainingDue !== 0);
 
   return (
     <div style={s.content}>
@@ -1017,11 +1092,29 @@ const ColdStorageDueScreen = ({ purchases, coldStorages, coldPayments, opsColdPa
               <span style={{ fontWeight: 800, fontSize: 15 }}>{cs.name}</span>
               <strong style={{ color: cs.remainingDue > 0 ? clr.orange : clr.green, fontSize: 16 }}>Due: ₹{fmt(cs.remainingDue)}</strong>
             </div>
+            
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12, color: clr.muted, marginTop: 4 }}>
+              <div>Dispatched Loaded Value: <strong style={{ color: clr.orange }}>₹{fmt(cs.totalColdDispatchValue)}</strong></div>
               <div>Total Paid: <strong style={{ color: clr.green }}>₹{fmt(cs.totalPaidToCold)}</strong></div>
             </div>
 
-            <div style={{ marginTop: 10, background: clr.card2, borderRadius: 8, padding: 10 }}>
+            {/* GP & VEHICLE NUMBER DETAILS */}
+            {cs.dispatchedGPs.length > 0 && (
+              <div style={{ marginTop: 8, background: clr.card2, borderRadius: 8, padding: 8 }}>
+                <div style={{ ...s.label, fontSize: "11px", color: clr.accent, marginBottom: 4 }}>🚚 Linked GP Dispatch Trucks</div>
+                {cs.dispatchedGPs.map((gp, idx) => (
+                  <div key={idx} style={{ fontSize: 12, borderBottom: idx !== cs.dispatchedGPs.length - 1 ? `1px solid ${clr.border}` : "none", padding: "4px 0" }}>
+                    <div style={s.rowBetween}>
+                      <span><strong>GP: {gp.gatepass_id}</strong> ({gp.vehicle_number})</span>
+                      <span style={{ color: clr.orange, fontWeight: 700 }}>₹{fmt(gp.gp_loaded_value)}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: clr.muted }}>Date: {gp.date} | Loaded: {gp.bags} Bags</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ marginTop: 8, background: clr.card2, borderRadius: 8, padding: 8 }}>
               <div style={{ ...s.label, fontSize: "11px", color: clr.muted, marginBottom: 4 }}>Payment Ledger History</div>
               {cs.historyLogs.length === 0 ? (
                 <div style={{ fontSize: 12, color: clr.muted }}>No past payments recorded.</div>
@@ -1190,7 +1283,7 @@ export default function App() {
       {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} varieties={varieties.data} gradings={gradings.data} />}
       {activeTab === "sale" && <SaleScreen dispatches={dispatches.data} opsD={dispatches} />}
       {activeTab === "payment" && <PaymentScreen dispatches={dispatches.data} purchases={purchases.data} payments={payments.data} opsPayment={payments} parties={parties.data} />}
-      {activeTab === "colddue" && <ColdStorageDueScreen purchases={purchases.data} coldStorages={coldStorages.data} coldPayments={coldPayments.data} opsColdPayment={coldPayments} />}
+      {activeTab === "colddue" && <ColdStorageDueScreen purchases={purchases.data} dispatches={dispatches.data} coldStorages={coldStorages.data} coldPayments={coldPayments.data} opsColdPayment={coldPayments} />}
       {activeTab === "pnl" && <PnLScreen dispatches={dispatches.data} parties={parties.data} mandis={mandis.data} />}
       {activeTab === "master" && <MasterScreen varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} mandis={mandis.data} parties={parties.data} opsV={varieties} opsG={gradings} opsCS={coldStorages} opsM={mandis} opsPA={parties} />}
 
