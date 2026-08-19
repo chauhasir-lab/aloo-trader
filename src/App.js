@@ -90,7 +90,7 @@ const s = {
   btnSm: (bg = clr.card2, txt = clr.text) => ({ background: bg, color: txt, border: `1px solid ${clr.border}`, borderRadius: 6, padding: "6px 10px", fontWeight: 600, fontSize: "13px", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }),
   content: { padding: 14, paddingBottom: 90 },
   navBar: { position: "fixed", bottom: 0, left: 0, right: 0, maxWidth: 480, margin: "0 auto", background: clr.card, borderTop: `1px solid ${clr.border}`, display: "flex", zIndex: 200 },
-  navItem: (active) => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "12px 4px", gap: 4, background: "none", border: "none", color: active ? clr.accent : clr.muted, fontSize: "16px", cursor: "pointer" }),
+  navItem: (active) => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "12px 2px", gap: 2, background: "none", border: "none", color: active ? clr.accent : clr.muted, fontSize: "15px", cursor: "pointer" }),
   divider: { height: 1, background: clr.border, margin: "10px 0" }
 };
 
@@ -105,6 +105,168 @@ const Icon = ({ name, size = 18, color = clr.text }) => {
 
 const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div style={s.label}>{label}</div>{children}</div>;
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 14, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
+
+// ===== NEW SCREEN: DISPATCH ANALYTICS & PARTYWISE / COLD BREAKDOWN =====
+const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases, payments, coldPayments }) => {
+  // 1. Calculate Party-wise Dispatches, Sale Received & Due
+  const partyWiseSummary = parties.map(party => {
+    const partyDispatches = dispatches.filter(d => d.destination_party_id === party.id);
+    
+    // Total Dispatch Cost Value
+    const totalDispatchValue = partyDispatches.reduce((sum, d) => {
+      const dispatchCost = (d.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0);
+      return sum + dispatchCost;
+    }, 0);
+
+    // Total Mandi Sale Amount Received/Recorded
+    const totalSaleReceived = partyDispatches.reduce((sum, d) => sum + (parseFloat(d.total_mandi_sale_amount) || 0), 0);
+
+    // Total Payments Received from this party
+    const partyGps = partyDispatches.map(d => d.gatepass_id);
+    const totalPaymentsRec = payments.filter(p => partyGps.includes(p.gatepass_id)).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+
+    const pendingDue = totalSaleReceived - totalPaymentsRec;
+
+    return {
+      partyId: party.id,
+      partyName: party.name,
+      totalDispatchValue,
+      totalSaleReceived,
+      totalPaymentsRec,
+      pendingDue,
+      dispatchCount: partyDispatches.length
+    };
+  }).filter(p => p.dispatchCount > 0 || p.totalDispatchValue > 0);
+
+  // 2. Calculate Cold Storage-wise Dispatches, Amount Paid Back & Due
+  const coldWiseSummary = coldStorages.map(cs => {
+    // Find all dispatches containing lots originating from this cold storage
+    let totalColdDispatchValue = 0;
+    let totalBagsDispatched = 0;
+
+    dispatches.forEach(d => {
+      (d.lot_details || []).forEach(l => {
+        const matchedPurchase = purchases.find(p => p.lot_id === l.lot_number);
+        if (matchedPurchase && matchedPurchase.cold_storage_id === cs.id) {
+          totalColdDispatchValue += parseFloat(l.purchase_lot_value) || 0;
+          totalBagsDispatched += parseFloat(l.purchase_bags) || 0;
+        }
+      });
+    });
+
+    // Total Paid Back to Cold Storage
+    const totalPaidBack = coldPayments.filter(cp => cp.cold_storage_id === cs.id).reduce((sum, cp) => sum + (parseFloat(cp.amount) || 0), 0);
+    const duePayable = totalColdDispatchValue - totalPaidBack;
+
+    return {
+      coldId: cs.id,
+      coldName: cs.name,
+      totalColdDispatchValue,
+      totalBagsDispatched,
+      totalPaidBack,
+      duePayable
+    };
+  }).filter(c => c.totalColdDispatchValue > 0 || c.totalPaidBack > 0);
+
+  const grandDispatchValue = partyWiseSummary.reduce((sum, p) => sum + p.totalDispatchValue, 0);
+  const grandSaleReceived = partyWiseSummary.reduce((sum, p) => sum + p.totalSaleReceived, 0);
+
+  return (
+    <div style={s.content}>
+      <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 12, color: clr.accent }}>
+        🚚 Dispatch Value & Settlements Summary
+      </div>
+
+      {/* OVERALL TOP METRICS */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+        <div style={{ ...s.card2, background: clr.blue + "18", border: `1px solid ${clr.blue}` }}>
+          <div style={s.label}>Total Dispatch Value</div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: clr.blue }}>₹{fmt(grandDispatchValue)}</div>
+        </div>
+        <div style={{ ...s.card2, background: clr.green + "18", border: `1px solid ${clr.green}` }}>
+          <div style={s.label}>Total Sale Recieved</div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: clr.green }}>₹{fmt(grandSaleReceived)}</div>
+        </div>
+      </div>
+
+      {/* 1. PARTY-WISE DISPATCH & SALE BREAKDOWN */}
+      <div style={{ ...s.label, fontSize: "13px", color: clr.text, marginBottom: 8, textTransform: "none" }}>
+        🏢 Party-Wise Dispatch & Payment Status
+      </div>
+
+      {partyWiseSummary.length === 0 ? (
+        <div style={{ ...s.card, color: clr.muted, textAlign: "center", padding: 16 }}>
+          Koi party dispatch record nahi mila.
+        </div>
+      ) : (
+        partyWiseSummary.map(p => (
+          <div key={p.partyId} style={{ ...s.card, borderLeft: `4px solid ${clr.purple}` }}>
+            <div style={s.rowBetween}>
+              <span style={{ fontWeight: 800, fontSize: 16, color: clr.text }}>{p.partyName}</span>
+              <Badge v={`${p.dispatchCount} Trucks`} color={clr.purple} />
+            </div>
+            <div style={s.divider} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
+              <div>
+                <span style={{ color: clr.muted, fontSize: 11 }}>TOTAL DISPATCH VALUE</span>
+                <div style={{ fontWeight: 700, color: clr.blue, fontSize: 15 }}>₹{fmt(p.totalDispatchValue)}</div>
+              </div>
+              <div>
+                <span style={{ color: clr.muted, fontSize: 11 }}>TOTAL SALE RECEIVED</span>
+                <div style={{ fontWeight: 700, color: clr.green, fontSize: 15 }}>₹{fmt(p.totalSaleReceived)}</div>
+              </div>
+              <div>
+                <span style={{ color: clr.muted, fontSize: 11 }}>CASH RECEIVED</span>
+                <div style={{ fontWeight: 600, color: clr.text }}>₹{fmt(p.totalPaymentsRec)}</div>
+              </div>
+              <div>
+                <span style={{ color: clr.muted, fontSize: 11 }}>PENDING PAYMENT DUE</span>
+                <div style={{ fontWeight: 800, color: p.pendingDue > 0 ? clr.red : clr.green }}>₹{fmt(p.pendingDue)}</div>
+              </div>
+            </div>
+          </div>
+        ))
+      )}
+
+      {/* 2. COLD STORAGE-WISE DISPATCH & PAYBACK BREAKDOWN */}
+      <div style={{ ...s.label, fontSize: "13px", color: clr.text, margin: "16px 0 8px 0", textTransform: "none" }}>
+        ❄️ Cold Storage-Wise Dispatch & Payback Ledger
+      </div>
+
+      {coldWiseSummary.length === 0 ? (
+        <div style={{ ...s.card, color: clr.muted, textAlign: "center", padding: 16 }}>
+          Cold storage dispatch records nahi hain.
+        </div>
+      ) : (
+        coldWiseSummary.map(c => (
+          <div key={c.coldId} style={{ ...s.card, borderLeft: `4px solid ${clr.orange}` }}>
+            <div style={s.rowBetween}>
+              <span style={{ fontWeight: 800, fontSize: 15, color: clr.text }}>{c.coldName}</span>
+              <span style={{ fontSize: 12, color: clr.muted }}>{c.totalBagsDispatched} Bags Out</span>
+            </div>
+            <div style={s.divider} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
+              <div>
+                <span style={{ color: clr.muted, fontSize: 11 }}>COLD DISPATCH VALUE</span>
+                <div style={{ fontWeight: 700, color: clr.orange, fontSize: 15 }}>₹{fmt(c.totalColdDispatchValue)}</div>
+              </div>
+              <div>
+                <span style={{ color: clr.muted, fontSize: 11 }}>PAID BACK TO COLD</span>
+                <div style={{ fontWeight: 700, color: clr.green, fontSize: 15 }}>₹{fmt(c.totalPaidBack)}</div>
+              </div>
+              <div style={{ gridColumn: "1 / span 2", borderTop: `1px dashed ${clr.border}`, paddingTop: 6, marginTop: 2 }}>
+                <div style={{ ...s.rowBetween }}>
+                  <span style={{ color: clr.muted, fontSize: 12 }}>REMAINING DUE TO PAY:</span>
+                  <strong style={{ fontSize: 15, color: c.duePayable > 0 ? clr.red : clr.green }}>₹{fmt(c.duePayable)}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+};
 
 // ===== DASHBOARD SCREEN WITH FULL LIFECYCLE SEARCH =====
 const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, varieties, gradings, coldStorages }) => {
@@ -1023,6 +1185,7 @@ export default function App() {
       </div>
 
       {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} payments={payments.data} mandis={mandis.data} parties={parties.data} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
+      {activeTab === "analytics" && <DispatchAnalyticsScreen dispatches={dispatches.data} parties={parties.data} coldStorages={coldStorages.data} purchases={purchases.data} payments={payments.data} coldPayments={coldPayments.data} />}
       {activeTab === "purchase" && <PurchaseScreen purchases={purchases.data} dispatches={dispatches.data} opsP={purchases} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
       {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} varieties={varieties.data} gradings={gradings.data} />}
       {activeTab === "sale" && <SaleScreen dispatches={dispatches.data} opsD={dispatches} />}
@@ -1033,6 +1196,7 @@ export default function App() {
 
       <div style={s.navBar}>
         <button onClick={() => setActiveTab("dashboard")} style={s.navItem(activeTab === "dashboard")}>📊</button>
+        <button onClick={() => setActiveTab("analytics")} style={s.navItem(activeTab === "analytics")}>🚚</button>
         <button onClick={() => setActiveTab("purchase")} style={s.navItem(activeTab === "purchase")}>📥</button>
         <button onClick={() => setActiveTab("dispatch")} style={s.navItem(activeTab === "dispatch")}>📤</button>
         <button onClick={() => setActiveTab("sale")} style={s.navItem(activeTab === "sale")}>💰</button>
