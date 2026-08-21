@@ -697,24 +697,33 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
   const [showPopModal, setShowPopModal] = useState(false);
   const [popData, setPopData] = useState(null);
   const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0, total_dispatch_weight: 0 });
-  const [itemForm, setItemForm] = useState({ lot_number: "", purchase_bags: "", purchase_weight_kg: "" });
+  const [itemForm, setItemForm] = useState({ lot_number: "", purchase_bags: "" });
 
   const availableLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0);
 
+  // Average weight per bag for the currently selected lot, taken from its Purchase entry
+  // (Total Weight ÷ Total Bags at purchase time). Used to auto-fetch dispatch weight below.
+  const selectedLotForItem = purchases.find(p => p.lot_id === itemForm.lot_number);
+  const avgWeightPerBag = selectedLotForItem ? ((parseFloat(selectedLotForItem.total_weight) || 0) / (parseFloat(selectedLotForItem.manual_bags) || 1)) : 0;
+  const autoCalculatedWeight = avgWeightPerBag * (parseInt(itemForm.purchase_bags) || 0);
+
   const addLotToTruck = () => {
-    if (!itemForm.lot_number || !itemForm.purchase_bags || !itemForm.purchase_weight_kg) {
-      return alert("❌ Please fill Lot, Bags and Weight!");
+    if (!itemForm.lot_number || !itemForm.purchase_bags) {
+      return alert("❌ Please fill Lot and Bags!");
     }
     const matchedPurchase = purchases.find(p => p.lot_id === itemForm.lot_number);
     if (!matchedPurchase) return alert("❌ Lot Selection Missing!");
     
     const remaining = getRemainingBags(matchedPurchase, dispatches);
     const bagsToLoad = parseInt(itemForm.purchase_bags) || 0; 
-    const manualWeight = parseFloat(itemForm.purchase_weight_kg) || 0; 
 
     if (bagsToLoad > remaining) return alert(`Only ${remaining} bags available in this lot!`);
+
+    // AUTO-FETCH: weight = (purchase's total weight ÷ purchase's total bags) × bags being dispatched
+    const purchaseAvgWeightPerBag = (parseFloat(matchedPurchase.total_weight) || 0) / (parseFloat(matchedPurchase.manual_bags) || 1);
+    const autoWeight = purchaseAvgWeightPerBag * bagsToLoad;
     
-    const stdBagsCalculated = manualWeight / 52.5; 
+    const stdBagsCalculated = autoWeight / 52.5; 
     const originalRatePerBag = parseFloat(matchedPurchase.rate_per_bag) || 0;
     const calculatedLotValue = stdBagsCalculated * originalRatePerBag; 
     const ratePerKg = originalRatePerBag / 52.5;
@@ -722,7 +731,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
     const newLot = {
       lot_number: itemForm.lot_number,
       purchase_bags: bagsToLoad, 
-      purchase_weight_kg: manualWeight,
+      purchase_weight_kg: autoWeight,
       purchase_rate_per_kg: ratePerKg,
       purchase_lot_value: calculatedLotValue,
       variety_name: varieties.find(v => v.id === matchedPurchase.variety_id)?.name || "N/A",
@@ -738,7 +747,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
         total_dispatch_weight: updatedDetails.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0)
       };
     });
-    setItemForm({ lot_number: "", purchase_bags: "", purchase_weight_kg: "" });
+    setItemForm({ lot_number: "", purchase_bags: "" });
   };
 
   const triggerPopMsg = (dispatchObj) => { setPopData(dispatchObj); setShowPopModal(true); };
@@ -826,7 +835,11 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
           <div style={s.label}>🚚 Load Multiple Lots into Truck</div>
           <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_number} onChange={e => setItemForm({ ...itemForm, lot_number: e.target.value })}><option value="">Select Available Lot</option>{availableLots.map(l => <option key={l.id} value={l.lot_id}>{l.lot_id}</option>)}</select>
           <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Bags Count" value={itemForm.purchase_bags} onChange={e => setItemForm({ ...itemForm, purchase_bags: e.target.value })} />
-          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Enter Weight (kg)" value={itemForm.purchase_weight_kg} onChange={e => setItemForm({ ...itemForm, purchase_weight_kg: e.target.value })} />
+          {itemForm.lot_number && itemForm.purchase_bags && (
+            <div style={{ fontSize: 12, color: clr.muted, marginBottom: 6 }}>
+              ⚖️ Auto-Fetched Weight: <strong style={{ color: clr.accent }}>{autoCalculatedWeight.toFixed(2)} kg</strong> (based on lot's avg weight/bag)
+            </div>
+          )}
           <button onClick={addLotToTruck} style={{ ...s.btnSm(clr.accent, "#000"), width: "100%" }}>+ Add Lot & Calculate Value</button>
         </div>
         {form.lot_details.length > 0 && (
