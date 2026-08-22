@@ -60,6 +60,21 @@ const uid = () => Math.random().toString(36).slice(2, 9).toUpperCase();
 const fmt = (n, d = 0) => (isNaN(n) || n === null || n === undefined ? "0" : Number(n).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d }));
 const today = () => new Date().toISOString().slice(0, 10);
 
+const downloadCSV = (filename, headers, rows) => {
+  const csvContent = [headers, ...rows]
+    .map(r => r.map(cell => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
 const clr = { 
   bg: "#0f1117", card: "#1a1d26", card2: "#22263a", accent: "#f5a623", green: "#22c55e", 
   red: "#ef4444", blue: "#3b82f6", purple: "#a855f7", muted: "#a0aec0", border: "#2d3148", text: "#f1f5f9", orange: "#f97316"
@@ -136,9 +151,13 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
 
     const totalDispatchValue = gpBreakdown.reduce((sum, g) => sum + g.purchaseCost, 0);
     const totalSaleReceived = gpBreakdown.reduce((sum, g) => sum + g.saleValue, 0);
-    const totalExpenses = gpBreakdown.reduce((sum, g) => sum + g.expenses, 0);
-    // Real realized profit/loss — only counts trucks that have a mandi sale recorded
-    const netMargin = totalSaleReceived - totalDispatchValue - totalExpenses;
+    // FIX: Only count purchase cost & expenses of trucks that are ACTUALLY SOLD.
+    // Unsold/in-transit stock must never show as a "loss" just because it hasn't sold yet —
+    // a loss can only be real once the mandi sale is recorded.
+    const soldPurchaseCost = gpBreakdown.filter(g => g.sold).reduce((sum, g) => sum + g.purchaseCost, 0);
+    const totalExpenses = gpBreakdown.filter(g => g.sold).reduce((sum, g) => sum + g.expenses, 0);
+    // Real realized profit/loss — only from trucks that have a mandi sale recorded
+    const netMargin = totalSaleReceived - soldPurchaseCost - totalExpenses;
 
     // Total Payments Received from this party
     const partyGps = partyDispatches.map(d => d.gatepass_id);
@@ -164,63 +183,28 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
   // FIX: Cold's due is strictly based on what has been DISPATCHED (GP loaded purchase value) from that
   // cold storage — never the full purchase register. Payments are then FIFO-allocated truck-by-truck
   // (oldest GP first) so each individual GP shows exactly how much of it is paid vs still due.
+  // SIMPLIFIED: cold-wise is now just an aggregate — how much material value moved from this cold,
+  // how much has been paid, and what's due/advance. Lot-by-lot detail is already tracked in
+  // Purchase, Dispatch, Sale and PnL screens, so it isn't repeated here.
   const coldWiseSummary = coldStorages.map(cs => {
     let totalColdDispatchValue = 0;
     let totalBagsDispatched = 0;
-    let rawGPs = [];
 
     dispatches.forEach(d => {
-      let gpColdValue = 0;
-      let gpColdBags = 0;
-
       (d.lot_details || []).forEach(l => {
         const matchedPurchase = purchases.find(p => p.lot_id === l.lot_number);
         if (matchedPurchase && matchedPurchase.cold_storage_id === cs.id) {
-          const val = parseFloat(l.purchase_lot_value) || 0;
-          const bags = parseFloat(l.purchase_bags) || 0;
-          gpColdValue += val;
-          gpColdBags += bags;
-          totalColdDispatchValue += val;
-          totalBagsDispatched += bags;
+          totalColdDispatchValue += parseFloat(l.purchase_lot_value) || 0;
+          totalBagsDispatched += parseFloat(l.purchase_bags) || 0;
         }
       });
-
-      if (gpColdValue > 0) {
-        rawGPs.push({
-          gatepass_id: d.gatepass_id,
-          vehicle_number: d.vehicle_number,
-          date: d.date,
-          bags: gpColdBags,
-          gp_loaded_value: gpColdValue
-        });
-      }
     });
 
-    // Total Paid Back to Cold Storage
-    const coldPaidLogs = coldPayments.filter(cp => cp.cold_storage_id === cs.id);
-    const totalPaidBack = coldPaidLogs.reduce((sum, cp) => sum + (parseFloat(cp.amount) || 0), 0);
+    const totalPaidBack = coldPayments.filter(cp => cp.cold_storage_id === cs.id).reduce((sum, cp) => sum + (parseFloat(cp.amount) || 0), 0);
     const duePayable = totalColdDispatchValue - totalPaidBack;
 
-    // FIFO allocate total paid amount across GPs, oldest dispatch first, so each GP shows its own due
-    const sortedGPs = [...rawGPs].sort((a, b) => new Date(a.date) - new Date(b.date));
-    let remainingPaid = totalPaidBack;
-    const dispatchedGPs = sortedGPs.map(gp => {
-      const allocatedPaid = Math.max(0, Math.min(remainingPaid, gp.gp_loaded_value));
-      remainingPaid -= allocatedPaid;
-      return { ...gp, paid_allocated: allocatedPaid, due_remaining: gp.gp_loaded_value - allocatedPaid };
-    });
-
-    return {
-      coldId: cs.id,
-      coldName: cs.name,
-      totalColdDispatchValue,
-      totalBagsDispatched,
-      dispatchedGPs,
-      coldPaidLogs,
-      totalPaidBack,
-      duePayable
-    };
-  }).filter(c => c.totalColdDispatchValue > 0 || c.totalPaidBack > 0 || c.dispatchedGPs.length > 0);
+    return { coldId: cs.id, coldName: cs.name, totalColdDispatchValue, totalBagsDispatched, totalPaidBack, duePayable };
+  }).filter(c => c.totalColdDispatchValue > 0 || c.totalPaidBack > 0);
 
   const grandDispatchValue = partyWiseSummary.reduce((sum, p) => sum + p.totalDispatchValue, 0);
   const grandSaleReceived = partyWiseSummary.reduce((sum, p) => sum + p.totalSaleReceived, 0);
@@ -347,41 +331,22 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
             </div>
             <div style={s.divider} />
             
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13, marginBottom: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
               <div>
-                <span style={{ color: clr.muted, fontSize: 11 }}>DISPATCHED (GP) PURCHASE VALUE</span>
+                <span style={{ color: clr.muted, fontSize: 11 }}>DISPATCHED (GP) VALUE</span>
                 <div style={{ fontWeight: 700, color: clr.orange, fontSize: 15 }}>₹{fmt(c.totalColdDispatchValue)}</div>
               </div>
               <div>
-                <span style={{ color: clr.muted, fontSize: 11 }}>PAID BACK TO COLD</span>
+                <span style={{ color: clr.muted, fontSize: 11 }}>PAID TO COLD</span>
                 <div style={{ fontWeight: 700, color: clr.green, fontSize: 15 }}>₹{fmt(c.totalPaidBack)}</div>
               </div>
               <div style={{ gridColumn: "1 / span 2", borderTop: `1px dashed ${clr.border}`, paddingTop: 6, marginTop: 2 }}>
                 <div style={{ ...s.rowBetween }}>
-                  <span style={{ color: clr.muted, fontSize: 12 }}>REMAINING DUE TO PAY:</span>
-                  <strong style={{ fontSize: 15, color: c.duePayable > 0 ? clr.red : clr.green }}>₹{fmt(c.duePayable)}</strong>
+                  <span style={{ color: clr.muted, fontSize: 12 }}>{c.duePayable >= 0 ? "REMAINING DUE TO PAY:" : "ADVANCE PAID:"}</span>
+                  <strong style={{ fontSize: 15, color: c.duePayable > 0 ? clr.red : clr.green }}>₹{fmt(Math.abs(c.duePayable))}</strong>
                 </div>
               </div>
             </div>
-
-            {/* GP & VEHICLE DISPATCH HISTORY FOR COLD — with per-GP paid/due allocation */}
-            {c.dispatchedGPs.length > 0 && (
-              <div style={{ background: clr.card2, borderRadius: 8, padding: 8, marginTop: 6 }}>
-                <div style={{ ...s.label, fontSize: "11px", color: clr.accent, marginBottom: 4 }}>🚚 Gatepass (GP) Dispatch History — Paid vs Due</div>
-                {c.dispatchedGPs.map((gp, gIdx) => (
-                  <div key={gIdx} style={{ fontSize: 12, borderBottom: gIdx !== c.dispatchedGPs.length - 1 ? `1px solid ${clr.border}` : "none", padding: "5px 0" }}>
-                    <div style={s.rowBetween}>
-                      <span><strong>GP: {gp.gatepass_id}</strong> ({gp.vehicle_number})</span>
-                      <span style={{ color: clr.orange, fontWeight: 700 }}>₹{fmt(gp.gp_loaded_value)}</span>
-                    </div>
-                    <div style={{ color: clr.muted, fontSize: 11 }}>Date: {gp.date} | Loaded: {gp.bags} Bags</div>
-                    <div style={{ fontSize: 11, marginTop: 2 }}>
-                      Paid: <strong style={{ color: clr.green }}>₹{fmt(gp.paid_allocated)}</strong> · Due: <strong style={{ color: gp.due_remaining > 0 ? clr.red : clr.green }}>₹{fmt(gp.due_remaining)}</strong>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         ))
       )}
@@ -390,9 +355,25 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
 };
 
 // ===== DASHBOARD SCREEN WITH FULL LIFECYCLE SEARCH =====
-const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, varieties, gradings, coldStorages }) => {
+const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, varieties, gradings, coldStorages, coldPayments }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDetail, setSelectedDetail] = useState(null);
+
+  // Cold Storage Dues summary — dispatched (GP) value vs total paid, per cold storage
+  const coldSummaryForDashboard = coldStorages.map(cs => {
+    let totalColdDispatchValue = 0;
+    dispatches.forEach(d => {
+      (d.lot_details || []).forEach(l => {
+        const matchedPurchase = purchases.find(p => p.lot_id === l.lot_number);
+        if (matchedPurchase && matchedPurchase.cold_storage_id === cs.id) {
+          totalColdDispatchValue += parseFloat(l.purchase_lot_value) || 0;
+        }
+      });
+    });
+    const totalPaid = coldPayments.filter(cp => cp.cold_storage_id === cs.id).reduce((sum, cp) => sum + (parseFloat(cp.amount) || 0), 0);
+    return { id: cs.id, name: cs.name, totalColdDispatchValue, totalPaid, due: totalColdDispatchValue - totalPaid };
+  }).filter(c => c.totalColdDispatchValue > 0 || c.totalPaid > 0)
+    .sort((a, b) => b.due - a.due);
 
   const totalBagsPurchased = purchases.reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
   const totalBagsRemaining = purchases.reduce((sum, p) => sum + getRemainingBags(p, dispatches), 0);
@@ -526,6 +507,22 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
         </div>
       </div>
 
+      {coldSummaryForDashboard.length > 0 && (
+        <div style={{ ...s.card, background: clr.orange + "10", marginTop: 10 }}>
+          <div style={s.label}>❄️ Cold Storage Dues</div>
+          <div style={s.divider} />
+          {coldSummaryForDashboard.map(c => (
+            <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, marginBottom: 6 }}>
+              <span>{c.name}</span>
+              <span>
+                <span style={{ color: clr.muted, marginRight: 10 }}>Paid: ₹{fmt(c.totalPaid)}</span>
+                <strong style={{ color: c.due > 0 ? clr.red : clr.green }}>{c.due >= 0 ? `Due: ₹${fmt(c.due)}` : `Adv: ₹${fmt(Math.abs(c.due))}`}</strong>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* FULL LIFECYCLE MODAL */}
       <Modal open={!!selectedDetail} onClose={() => setSelectedDetail(null)} title="🔍 Complete Batch Lifecycle Journey">
         {selectedDetail && (
@@ -610,6 +607,20 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   const totalBags = purchases.reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
   const totalRemaining = purchases.reduce((sum, p) => sum + getRemainingBags(p, dispatches), 0);
 
+  // FIX: Active lots stay on top, fully-dispatched (closed) lots automatically sink to the bottom.
+  // Any ACTIVE lot older than 15 days is flagged red and pinned above everything else.
+  const sortedPurchases = [...purchases].map(p => {
+    const remaining = getRemainingBags(p, dispatches);
+    const isClosed = remaining <= 0;
+    const daysOld = p.date ? Math.floor((new Date() - new Date(p.date)) / (1000 * 60 * 60 * 24)) : 0;
+    const isAging = !isClosed && daysOld > 15;
+    return { ...p, _remaining: remaining, _isClosed: isClosed, _daysOld: daysOld, _isAging: isAging };
+  }).sort((a, b) => {
+    if (a._isAging !== b._isAging) return a._isAging ? -1 : 1;
+    if (a._isClosed !== b._isClosed) return a._isClosed ? 1 : -1;
+    return new Date(b.date) - new Date(a.date);
+  });
+
   const save = async () => {
     if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag || !form.total_weight) {
       return alert("❌ Fill all required fields!");
@@ -641,15 +652,16 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
         <button onClick={() => { setEditItem(null); setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() }); setShowForm(true); }} style={s.btn(clr.accent, "#000")}><Icon name="add" size={14} /> Add New</button>
       </div>
 
-      {purchases.map(p => {
-        const remaining = getRemainingBags(p, dispatches);
-        const isClosed = remaining <= 0;
+      {sortedPurchases.map(p => {
+        const remaining = p._remaining;
+        const isClosed = p._isClosed;
         return (
-          <div key={p.id} style={{ ...s.card, borderLeft: `4px solid ${isClosed ? clr.red : clr.green}` }}>
+          <div key={p.id} style={{ ...s.card, borderLeft: `4px solid ${p._isAging ? clr.red : (isClosed ? clr.red : clr.green)}` }}>
             <div style={s.rowBetween}>
               <div style={s.row}>
                 <Badge v={p.lot_id} color={isClosed ? clr.red : clr.accent} />
                 <Badge v={isClosed ? "CLOSED" : "ACTIVE"} color={isClosed ? clr.red : clr.green} />
+                {p._isAging && <Badge v={`⚠️ ${p._daysOld}d OLD STOCK`} color={clr.red} />}
               </div>
               <span style={{ fontSize: 12, color: clr.muted }}>{p.date}</span>
             </div>
@@ -752,6 +764,17 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
 
   const triggerPopMsg = (dispatchObj) => { setPopData(dispatchObj); setShowPopModal(true); };
 
+  const exportDispatchesCSV = () => {
+    const headers = ["Gatepass ID", "Vehicle Number", "Destination Party", "Target Mandi", "Date", "Bags Loaded", "Weight (kg)", "Loaded Purchase Value", "Mandi Sale Amount", "Expenses"];
+    const rows = dispatches.map(d => {
+      const bags = (d.lot_details || []).reduce((s, i) => s + (parseInt(i.purchase_bags) || 0), 0);
+      const weight = (d.lot_details || []).reduce((s, i) => s + (parseFloat(i.purchase_weight_kg) || 0), 0);
+      const value = (d.lot_details || []).reduce((s, i) => s + (parseFloat(i.purchase_lot_value) || 0), 0);
+      return [d.gatepass_id, d.vehicle_number, parties.find(p => p.id === d.destination_party_id)?.name || "", mandis.find(m => m.id === d.mandi_id)?.name || "", d.date, bags, weight.toFixed(2), value.toFixed(2), d.total_mandi_sale_amount || 0, d.total_expenses || 0];
+    });
+    downloadCSV(`Dispatches_${today()}.csv`, headers, rows);
+  };
+
   const save = async () => {
     if (!form.gatepass_id || !form.destination_party_id || !form.mandi_id || form.lot_details.length === 0) {
       return alert("❌ Complete the form with at least 1 Lot!");
@@ -767,10 +790,11 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
 
   return (
     <div style={s.content}>
-      <div style={{ ...s.rowBetween, marginBottom: 14 }}>
+      <div style={{ ...s.rowBetween, marginBottom: 8 }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>Dispatches (Truck Dispatch)</span>
         <button onClick={() => { setForm({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0, total_dispatch_weight: 0 }); setShowForm(true); }} style={s.btn()}><Icon name="add" size={14} /> New Truck</button>
       </div>
+      <button onClick={exportDispatchesCSV} style={{ ...s.btnSm(), width: "100%", marginBottom: 14, justifyContent: "center" }}>⬇️ Export CSV (by GP / Vehicle Number)</button>
 
       {dispatches.map(d => {
         const totalBagsInTruck = (d.lot_details || []).reduce((acc, curr) => acc + (parseInt(curr.purchase_bags) || 0), 0);
@@ -860,11 +884,23 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
 };
 
 // ===== MANDI SALE SCREEN (WITH EDIT & DELETE ENABLED) =====
-const SaleScreen = ({ dispatches, opsD }) => {
+const SaleScreen = ({ dispatches, opsD, parties, mandis }) => {
   const [showForm, setShowForm] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [selectedDispatchId, setSelectedDispatchId] = useState("");
   const [form, setForm] = useState({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "", total_expenses: 0, original_load_value: 0 });
+
+  const exportSalesCSV = () => {
+    const headers = ["Gatepass ID", "Vehicle Number", "Destination Party", "Target Mandi", "Date", "Mandi Weight (kg)", "Sale Amount", "Expenses", "Loaded Purchase Value", "Net Margin"];
+    const rows = dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(d => {
+      const loadedValue = (d.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0);
+      const exp = parseFloat(d.total_expenses) || 0;
+      const sale = parseFloat(d.total_mandi_sale_amount) || 0;
+      const margin = sale - loadedValue - exp;
+      return [d.gatepass_id, d.vehicle_number, parties?.find(p => p.id === d.destination_party_id)?.name || "", mandis?.find(m => m.id === d.mandi_id)?.name || "", d.date, d.total_mandi_weight_received || 0, sale.toFixed(2), exp.toFixed(2), loadedValue.toFixed(2), margin.toFixed(2)];
+    });
+    downloadCSV(`MandiSales_${today()}.csv`, headers, rows);
+  };
 
   const loadDispatchData = (dispatchId) => {
     setSelectedDispatchId(dispatchId);
@@ -924,10 +960,11 @@ const SaleScreen = ({ dispatches, opsD }) => {
 
   return (
     <div style={s.content}>
-      <div style={{ ...s.rowBetween, marginBottom: 14 }}>
+      <div style={{ ...s.rowBetween, marginBottom: 8 }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>Mandi Sales Book</span>
         <button onClick={() => { setEditMode(false); setSelectedDispatchId(""); setForm({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "", total_expenses: 0, original_load_value: 0 }); setShowForm(true); }} style={s.btn(clr.green, "#fff")}>New Mandi Sale Entry</button>
       </div>
+      <button onClick={exportSalesCSV} style={{ ...s.btnSm(), width: "100%", marginBottom: 14, justifyContent: "center" }}>⬇️ Export CSV (by Party / Mandi / Vehicle)</button>
 
       {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(sx => {
         const loadedValue = (sx.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0);
@@ -1007,6 +1044,18 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
     }
   };
 
+  const exportPaymentsCSV = () => {
+    const headers = ["Party", "Gatepass ID", "Vehicle", "Amount", "Payment Mode", "Date"];
+    const rows = payments.map(pay => {
+      const d = dispatches.find(dd => dd.gatepass_id === pay.gatepass_id);
+      const partyName = d ? (parties.find(p => p.id === d.destination_party_id)?.name || "") : "";
+      return [partyName, pay.gatepass_id, d?.vehicle_number || "", pay.amount, pay.payment_mode, pay.date];
+    });
+    downloadCSV(`PartyPayments_${today()}.csv`, headers, rows);
+  };
+
+  // FIX: Track how long a party's due has been pending (from the oldest GP still unpaid) so
+  // parties delayed 7+ days can be surfaced at the top.
   const activePartiesSummary = parties.map(p => {
     const dispatchesToParty = dispatches.filter(d => d.destination_party_id === p.id);
     const totalSale = dispatchesToParty.reduce((sum, d) => sum + (parseFloat(d.total_mandi_sale_amount) || 0), 0);
@@ -1016,30 +1065,44 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
       const gpSale = parseFloat(d.total_mandi_sale_amount) || 0;
       const gpPaidLogs = payments.filter(py => py.gatepass_id === d.gatepass_id);
       const gpPaid = gpPaidLogs.reduce((sum, py) => sum + (parseFloat(py.amount) || 0), 0);
-      return { gatepass_id: d.gatepass_id, vehicle: d.vehicle_number, sale: gpSale, paid: gpPaid, due: gpSale - gpPaid, logs: gpPaidLogs };
+      return { gatepass_id: d.gatepass_id, vehicle: d.vehicle_number, sale: gpSale, paid: gpPaid, due: gpSale - gpPaid, logs: gpPaidLogs, date: d.date };
     });
 
     const totalPaidAmount = payments.filter(py => gpsToParty.includes(py.gatepass_id)).reduce((sum, py) => sum + (parseFloat(py.amount) || 0), 0);
+    const due = totalSale - totalPaidAmount;
 
-    return { id: p.id, name: p.name, totalSale, paidAmount: totalPaidAmount, due: totalSale - totalPaidAmount, gpBreakdown };
-  }).filter(p => p.gpBreakdown.length > 0 || p.due !== 0);
+    const pendingGps = gpBreakdown.filter(gp => gp.due > 0 && gp.date);
+    const oldestPendingDate = pendingGps.length > 0 ? pendingGps.reduce((min, gp) => new Date(gp.date) < new Date(min) ? gp.date : min, pendingGps[0].date) : null;
+    const delayDays = oldestPendingDate ? Math.floor((new Date() - new Date(oldestPendingDate)) / (1000 * 60 * 60 * 24)) : 0;
+    const isDelayed = due > 0 && delayDays > 7;
+
+    return { id: p.id, name: p.name, totalSale, paidAmount: totalPaidAmount, due, gpBreakdown, delayDays, isDelayed };
+  }).filter(p => p.gpBreakdown.length > 0 || p.due !== 0)
+    .sort((a, b) => {
+      if (a.isDelayed !== b.isDelayed) return a.isDelayed ? -1 : 1;
+      return b.delayDays - a.delayDays;
+    });
 
   return (
     <div style={s.content}>
-      <div style={{ ...s.rowBetween, marginBottom: 14 }}>
+      <div style={{ ...s.rowBetween, marginBottom: 8 }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>Party Ledgers (Active)</span>
         <button onClick={() => { setEditItem(null); setForm({ gatepass_id: "", amount: "", payment_mode: "cash", date: today(), notes: "" }); setShowForm(true); }} style={s.btn(clr.orange, "#000")}>+ Record Cash Receipts</button>
       </div>
+      <button onClick={exportPaymentsCSV} style={{ ...s.btnSm(), width: "100%", marginBottom: 14, justifyContent: "center" }}>⬇️ Export CSV (by Party / Vehicle / GP)</button>
 
       {activePartiesSummary.length === 0 ? (
         <div style={{ ...s.card, color: clr.muted, textAlign: "center", padding: 20 }}>Koi active party ya history transaction nahi mila.</div>
       ) : (
         activePartiesSummary.map(p => (
-          <div key={p.id} style={{ ...s.card, marginBottom: 14 }}>
+          <div key={p.id} style={{ ...s.card, marginBottom: 14, borderLeft: p.isDelayed ? `4px solid ${clr.red}` : undefined }}>
             <div style={s.rowBetween}>
               <span style={{ fontWeight: 800, fontSize: 16, color: clr.accent }}>{p.name}</span>
               <strong style={{ color: p.due > 0 ? clr.red : clr.green }}>Net Due: ₹{fmt(p.due)}</strong>
             </div>
+            {p.isDelayed && (
+              <div style={{ marginTop: 6 }}><Badge v={`🔴 Payment Delayed ${p.delayDays} Days`} color={clr.red} /></div>
+            )}
             
             <div style={{ marginTop: 10, background: clr.card2, borderRadius: 8, padding: 10 }}>
               <div style={{ ...s.label, fontSize: "11px", color: clr.muted, marginBottom: 6 }}>Gatepass Payment History</div>
@@ -1126,101 +1189,85 @@ const ColdStorageDueScreen = ({ purchases, dispatches, coldStorages, coldPayment
     }
   };
 
-  // STRICT FIX: Cold Storage Due strictly from GP Dispatched Material (never full purchase register),
-  // and payments FIFO-allocated GP-by-GP (oldest truck first) so remaining due is visible truck-wise.
+  const exportColdPaymentsCSV = () => {
+    const headers = ["Cold Storage", "Amount", "Payment Mode", "Date"];
+    const rows = coldPayments.map(cp => [coldStorages.find(c => c.id === cp.cold_storage_id)?.name || "", cp.amount, cp.payment_mode, cp.date]);
+    downloadCSV(`ColdPayments_${today()}.csv`, headers, rows);
+  };
+
+  // SIMPLIFIED: Cold Storage Due strictly from GP Dispatched Material (never full purchase register).
+  // Lot/GP level detail is already tracked in Purchase/Dispatch/Sale/PnL screens, so this screen only
+  // shows the aggregate: value loaded, total paid, and net due/advance.
+  // Urgency: flagged (and pinned to top) if due > ₹3,00,000 OR the oldest unpaid truck is 20+ days old.
   const activeColdSummary = coldStorages.map(cs => {
     let totalColdDispatchValue = 0;
     let rawGPs = [];
 
     dispatches.forEach(d => {
       let gpColdValue = 0;
-      let gpColdBags = 0;
 
       (d.lot_details || []).forEach(l => {
         const matchedPurchase = purchases.find(p => p.lot_id === l.lot_number);
         if (matchedPurchase && matchedPurchase.cold_storage_id === cs.id) {
           const val = parseFloat(l.purchase_lot_value) || 0;
-          const bags = parseFloat(l.purchase_bags) || 0;
           gpColdValue += val;
-          gpColdBags += bags;
           totalColdDispatchValue += val;
         }
       });
 
-      if (gpColdValue > 0) {
-        rawGPs.push({
-          gatepass_id: d.gatepass_id,
-          vehicle_number: d.vehicle_number,
-          date: d.date,
-          bags: gpColdBags,
-          gp_loaded_value: gpColdValue
-        });
-      }
+      if (gpColdValue > 0) rawGPs.push({ date: d.date, gp_loaded_value: gpColdValue });
     });
 
     const totalPaidToCold = coldPayments.filter(cp => cp.cold_storage_id === cs.id).reduce((sum, cp) => sum + (parseFloat(cp.amount) || 0), 0);
     const historyLogs = coldPayments.filter(cp => cp.cold_storage_id === cs.id).sort((a,b) => new Date(b.date) - new Date(a.date));
+    const remainingDue = totalColdDispatchValue - totalPaidToCold;
 
-    // FIFO allocate total paid amount, oldest GP dispatch first, so each truck shows its own paid/due
+    // Internal-only FIFO pass just to find the oldest still-pending truck's date, for delay tracking
     const sortedGPs = [...rawGPs].sort((a, b) => new Date(a.date) - new Date(b.date));
     let remainingPaid = totalPaidToCold;
-    const dispatchedGPs = sortedGPs.map(gp => {
-      const allocatedPaid = Math.max(0, Math.min(remainingPaid, gp.gp_loaded_value));
-      remainingPaid -= allocatedPaid;
-      return { ...gp, paid_allocated: allocatedPaid, due_remaining: gp.gp_loaded_value - allocatedPaid };
-    });
+    let oldestPendingDate = null;
+    for (const gp of sortedGPs) {
+      const allocated = Math.max(0, Math.min(remainingPaid, gp.gp_loaded_value));
+      remainingPaid -= allocated;
+      if (gp.gp_loaded_value - allocated > 0 && !oldestPendingDate) oldestPendingDate = gp.date;
+    }
+    const delayDays = oldestPendingDate ? Math.floor((new Date() - new Date(oldestPendingDate)) / (1000 * 60 * 60 * 24)) : 0;
+    const isUrgent = remainingDue > 300000 || delayDays > 20;
 
-    return { 
-      id: cs.id, 
-      name: cs.name, 
-      totalColdDispatchValue, 
-      totalPaidToCold, 
-      remainingDue: totalColdDispatchValue - totalPaidToCold, 
-      dispatchedGPs,
-      historyLogs 
-    };
-  }).filter(c => c.totalColdDispatchValue > 0 || c.historyLogs.length > 0 || c.remainingDue !== 0);
+    return { id: cs.id, name: cs.name, totalColdDispatchValue, totalPaidToCold, remainingDue, historyLogs, delayDays, isUrgent };
+  }).filter(c => c.totalColdDispatchValue > 0 || c.historyLogs.length > 0 || c.remainingDue !== 0)
+    .sort((a, b) => {
+      if (a.isUrgent !== b.isUrgent) return a.isUrgent ? -1 : 1;
+      return b.remainingDue - a.remainingDue;
+    });
 
   return (
     <div style={s.content}>
-      <div style={{ ...s.rowBetween, marginBottom: 14 }}>
+      <div style={{ ...s.rowBetween, marginBottom: 8 }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>❄️ Cold Outstandings (Active)</span>
         <button onClick={() => { setEditItem(null); setPayForm({ cold_storage_id: "", amount: "", payment_mode: "cash", date: today() }); setShowPayForm(true); }} style={s.btnSm(clr.orange + "22", clr.orange)}>+ Record Paid to Cold</button>
       </div>
+      <button onClick={exportColdPaymentsCSV} style={{ ...s.btnSm(), width: "100%", marginBottom: 14, justifyContent: "center" }}>⬇️ Export CSV (Cold Payments)</button>
 
       {activeColdSummary.length === 0 ? (
         <div style={{ ...s.card, color: clr.muted, textAlign: "center", padding: 20 }}>Koi active cold storage records ya stock nahi mila.</div>
       ) : (
         activeColdSummary.map(cs => (
-          <div key={cs.id} style={{ ...s.card, marginBottom: 12 }}>
+          <div key={cs.id} style={{ ...s.card, marginBottom: 12, borderLeft: cs.isUrgent ? `4px solid ${clr.red}` : undefined }}>
             <div style={s.rowBetween}>
               <span style={{ fontWeight: 800, fontSize: 15 }}>{cs.name}</span>
-              <strong style={{ color: cs.remainingDue > 0 ? clr.orange : clr.green, fontSize: 16 }}>Due: ₹{fmt(cs.remainingDue)}</strong>
+              <strong style={{ color: cs.remainingDue > 0 ? clr.orange : clr.green, fontSize: 16 }}>
+                {cs.remainingDue >= 0 ? `Due: ₹${fmt(cs.remainingDue)}` : `Advance: ₹${fmt(Math.abs(cs.remainingDue))}`}
+              </strong>
             </div>
+            {cs.isUrgent && (
+              <div style={{ marginTop: 6 }}><Badge v={`🔴 Urgent${cs.delayDays > 20 ? ` — ${cs.delayDays}d Delayed` : ""}`} color={clr.red} /></div>
+            )}
             
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12, color: clr.muted, marginTop: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12, color: clr.muted, marginTop: 8 }}>
               <div>Dispatched (GP) Value: <strong style={{ color: clr.orange }}>₹{fmt(cs.totalColdDispatchValue)}</strong></div>
               <div>Total Paid: <strong style={{ color: clr.green }}>₹{fmt(cs.totalPaidToCold)}</strong></div>
             </div>
-
-            {/* GP & VEHICLE NUMBER DETAILS — with per-truck paid/due after FIFO allocation */}
-            {cs.dispatchedGPs.length > 0 && (
-              <div style={{ marginTop: 8, background: clr.card2, borderRadius: 8, padding: 8 }}>
-                <div style={{ ...s.label, fontSize: "11px", color: clr.accent, marginBottom: 4 }}>🚚 Linked GP Dispatch Trucks — Paid vs Due</div>
-                {cs.dispatchedGPs.map((gp, idx) => (
-                  <div key={idx} style={{ fontSize: 12, borderBottom: idx !== cs.dispatchedGPs.length - 1 ? `1px solid ${clr.border}` : "none", padding: "4px 0" }}>
-                    <div style={s.rowBetween}>
-                      <span><strong>GP: {gp.gatepass_id}</strong> ({gp.vehicle_number})</span>
-                      <span style={{ color: clr.orange, fontWeight: 700 }}>₹{fmt(gp.gp_loaded_value)}</span>
-                    </div>
-                    <div style={{ fontSize: 11, color: clr.muted }}>Date: {gp.date} | Loaded: {gp.bags} Bags</div>
-                    <div style={{ fontSize: 11, marginTop: 2 }}>
-                      Paid: <strong style={{ color: clr.green }}>₹{fmt(gp.paid_allocated)}</strong> · Due: <strong style={{ color: gp.due_remaining > 0 ? clr.red : clr.green }}>₹{fmt(gp.due_remaining)}</strong>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
 
             <div style={{ marginTop: 8, background: clr.card2, borderRadius: 8, padding: 8 }}>
               <div style={{ ...s.label, fontSize: "11px", color: clr.muted, marginBottom: 4 }}>Payment Ledger History</div>
@@ -1381,15 +1428,18 @@ export default function App() {
   return (
     <div style={s.screen}>
       <div style={s.header}>
-        <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent }}>🥔 AlooTrader v5.6</span>
+        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
+          <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent, letterSpacing: 0.5 }}>🥔 JSN FARM</span>
+          <span style={{ fontSize: 10, color: clr.muted, fontWeight: 600 }}>AlooTrader v5.7</span>
+        </div>
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
-      {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} payments={payments.data} mandis={mandis.data} parties={parties.data} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
+      {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} payments={payments.data} mandis={mandis.data} parties={parties.data} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} coldPayments={coldPayments.data} />}
       {activeTab === "analytics" && <DispatchAnalyticsScreen dispatches={dispatches.data} parties={parties.data} coldStorages={coldStorages.data} purchases={purchases.data} payments={payments.data} coldPayments={coldPayments.data} />}
       {activeTab === "purchase" && <PurchaseScreen purchases={purchases.data} dispatches={dispatches.data} opsP={purchases} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
       {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} varieties={varieties.data} gradings={gradings.data} />}
-      {activeTab === "sale" && <SaleScreen dispatches={dispatches.data} opsD={dispatches} />}
+      {activeTab === "sale" && <SaleScreen dispatches={dispatches.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} />}
       {activeTab === "payment" && <PaymentScreen dispatches={dispatches.data} purchases={purchases.data} payments={payments.data} opsPayment={payments} parties={parties.data} />}
       {activeTab === "colddue" && <ColdStorageDueScreen purchases={purchases.data} dispatches={dispatches.data} coldStorages={coldStorages.data} coldPayments={coldPayments.data} opsColdPayment={coldPayments} />}
       {activeTab === "pnl" && <PnLScreen dispatches={dispatches.data} parties={parties.data} mandis={mandis.data} />}
