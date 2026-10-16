@@ -376,7 +376,6 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
     p.lot_id?.toLowerCase().includes(q) || p.farmer_name?.toLowerCase().includes(q)
   );
 
-  // SEARCH UPDATED: Support searching by Vehicle Number as well as Gatepass ID and Lot ID
   const filteredDispatches = q === "" ? [] : dispatches.filter(d => 
     d.gatepass_id?.toLowerCase().includes(q) || 
     d.vehicle_number?.toLowerCase().includes(q) ||
@@ -503,11 +502,10 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
         </div>
       )}
 
-      {/* FULL LIFECYCLE SEARCH MODAL - EXPANDED LOT & VEHICLE DETAILS */}
+      {/* FULL LIFECYCLE SEARCH MODAL */}
       <Modal open={!!selectedDetail} onClose={() => setSelectedDetail(null)} title="🔍 Complete Batch / Vehicle Lifecycle Journey">
         {selectedDetail && (
           <div style={{ fontSize: 14 }}>
-            {/* Purchase Details Breakdown */}
             <div style={{ ...s.card2, borderLeft: `4px solid ${clr.accent}`, marginBottom: 10 }}>
               <div style={{ fontWeight: 800, color: clr.accent, marginBottom: 6 }}>📥 1. PURCHASE DETAILS</div>
               {selectedDetail.purchases.length === 0 ? (
@@ -536,7 +534,6 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
               )}
             </div>
 
-            {/* Dispatch Logistics & Vehicle Details */}
             <div style={{ ...s.card2, borderLeft: `4px solid ${clr.blue}`, marginBottom: 10 }}>
               <div style={{ fontWeight: 800, color: clr.blue, marginBottom: 6 }}>📤 2. DISPATCH & VEHICLE LOGISTICS</div>
               {selectedDetail.dispatches.length === 0 ? (
@@ -560,7 +557,6 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
               )}
             </div>
 
-            {/* Mandi Sale & Margin Details */}
             <div style={{ ...s.card2, borderLeft: `4px solid ${clr.green}` }}>
               <div style={{ fontWeight: 800, color: clr.green, marginBottom: 6 }}>💰 3. MANDI SALE & NET MARGIN</div>
               {selectedDetail.dispatches.length === 0 || !selectedDetail.dispatches.some(d => d.total_mandi_sale_amount > 0) ? (
@@ -591,7 +587,7 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
   );
 };
 
-// ===== PURCHASE SCREEN (UPDATED WITH DAGI/CANCEL BAGS OPTION) =====
+// ===== PURCHASE SCREEN (BUG 3 FIXED HERE) =====
 const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, coldStorages }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -620,15 +616,32 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
     const dagiInput = parseFloat(form.dagi_bags) || 0;
     const effectiveBags = totalBagsInput - dagiInput;
 
+    // BUG 3 FIX APPLIED HERE: Weight & Total Bill Auto-Adjust on Dagi Change
+    let weightForLot;
+    if (editItem) {
+      const oldEff = (parseFloat(editItem.manual_bags) || 0) - (parseFloat(editItem.dagi_bags) || 0);
+      const oldW = parseFloat(editItem.total_weight) || 0;
+      const typedChanged = String(form.total_weight) !== String(editItem.total_weight);
+      weightForLot = typedChanged
+        ? (parseFloat(form.total_weight) || 0)
+        : (oldW > 0 && oldEff > 0 ? (oldW / oldEff) * effectiveBags : effectiveBags * 52.5);
+    } else {
+      const w = parseFloat(form.total_weight) || 0;
+      weightForLot = w > 0
+        ? (totalBagsInput > 0 ? (w / totalBagsInput) * effectiveBags : w)
+        : effectiveBags * 52.5;
+    }
+
     const rateBag = parseFloat(form.rate_per_bag) || 0;
-    const stdBags = (parseFloat(form.total_weight) || (effectiveBags * 52.5)) / 52.5;
+    const stdBags = weightForLot / 52.5;
     const currentTotalCost = stdBags * rateBag;
-    
-    const payload = { 
-      ...form, 
+
+    const payload = {
+      ...form,
       dagi_bags: dagiInput,
-      std_bags: stdBags.toFixed(2), 
-      total_cost: currentTotalCost 
+      total_weight: weightForLot.toFixed(2),
+      std_bags: stdBags.toFixed(2),
+      total_cost: currentTotalCost
     };
 
     if (editItem) {
@@ -708,7 +721,7 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   );
 };
 
-// ===== DISPATCH LOGISTICS (UPDATED WITH AUTO WEIGHT SYNC & 52.5 KG STD RATE LOGIC) =====
+// ===== DISPATCH LOGISTICS (BUG 1 & BUG 2 FIXED HERE) =====
 const DispatchScreen = ({ dispatches, purchases, opsD, opsP, parties, mandis, varieties, gradings }) => {
   const [showForm, setShowForm] = useState(false);
   const [showPopModal, setShowPopModal] = useState(false);
@@ -719,7 +732,13 @@ const DispatchScreen = ({ dispatches, purchases, opsD, opsP, parties, mandis, va
   const availableLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0);
 
   const selectedLotForItem = purchases.find(p => p.lot_id === itemForm.lot_number);
-  const avgWeightPerBag = selectedLotForItem ? ((parseFloat(selectedLotForItem.total_weight) || 0) / (parseFloat(selectedLotForItem.manual_bags) || 1)) : 0;
+
+  // BUG 2 FIX APPLIED HERE: Average weight per bag divide by effective bags
+  const avgWeightPerBag = selectedLotForItem
+    ? ((parseFloat(selectedLotForItem.total_weight) || 0) /
+       (((parseFloat(selectedLotForItem.manual_bags) || 0) - (parseFloat(selectedLotForItem.dagi_bags) || 0)) || 1))
+    : 0;
+
   const autoCalculatedWeight = itemForm.manual_weight_kg ? parseFloat(itemForm.manual_weight_kg) : (avgWeightPerBag * (parseInt(itemForm.purchase_bags) || 0));
 
   const addLotToTruck = () => {
@@ -736,22 +755,20 @@ const DispatchScreen = ({ dispatches, purchases, opsD, opsP, parties, mandis, va
 
     const loadedWeight = itemForm.manual_weight_kg ? parseFloat(itemForm.manual_weight_kg) : autoCalculatedWeight;
     
-    // STD RATE FIXED TO 52.5 KG PER BAG
     const stdBagsCalculated = loadedWeight / 52.5; 
     const originalRatePerBag = parseFloat(matchedPurchase.rate_per_bag) || 0;
     const calculatedLotValue = stdBagsCalculated * originalRatePerBag; 
     const ratePerKg = originalRatePerBag / 52.5;
 
-    // AUTO-SYNC LOGIC: Average weight per bag loaded = loadedWeight / bagsToLoad.
-    // Sync this average weight across all total purchase bags of that lot in Purchase Register.
+    // AUTO-SYNC LOGIC & BUG 1 FIX APPLIED HERE:
     if (opsP && matchedPurchase) {
       const avgLoadedWeightPerBag = loadedWeight / (bagsToLoad || 1);
       const effectiveTotalBags = (parseFloat(matchedPurchase.manual_bags) || 0) - (parseFloat(matchedPurchase.dagi_bags) || 0);
-      const syncedTotalWeight = (avgLoadedWeightPerBag * effectiveTotalBags).toFixed(2);
-      const syncedTotalCost = (effectiveTotalBags * originalRatePerBag).toFixed(2);
+      const syncedTotalWeight = avgLoadedWeightPerBag * effectiveTotalBags;
+      const syncedTotalCost = ((syncedTotalWeight / 52.5) * originalRatePerBag).toFixed(2);
 
       opsP.editItem(matchedPurchase.id, {
-        total_weight: syncedTotalWeight,
+        total_weight: syncedTotalWeight.toFixed(2),
         std_bags: (syncedTotalWeight / 52.5).toFixed(2),
         total_cost: syncedTotalCost
       });
@@ -1233,7 +1250,7 @@ const ColdStorageDueScreen = ({ purchases, dispatches, coldStorages, coldPayment
     const historyLogs = coldPayments.filter(cp => cp.cold_storage_id === cs.id).sort((a,b) => new Date(b.date) - new Date(a.date));
     const remainingDue = totalColdDispatchValue - totalPaidToCold;
 
-    const sortedGPs = [...rawGPs].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const sortedGPs = [...rawGPs].sort((a, b) => new Date(a.date) - new Date(a.date));
     let remainingPaid = totalPaidToCold;
     let oldestPendingDate = null;
     for (const gp of sortedGPs) {
@@ -1440,7 +1457,7 @@ export default function App() {
       <div style={s.header}>
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
           <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent, letterSpacing: 0.5 }}>🥔 JSN FARM</span>
-          <span style={{ fontSize: 10, color: clr.muted, fontWeight: 600 }}>AlooTrader v5.8</span>
+          <span style={{ fontSize: 10, color: clr.muted, fontWeight: 600 }}>AlooTrader v5.9</span>
         </div>
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
