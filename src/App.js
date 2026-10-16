@@ -88,7 +88,8 @@ const Badge = ({ v, color = clr.accent }) => (
 
 const getRemainingBags = (purchase, dispatches = []) => {
   const dispatchedBags = dispatches.flatMap(d => d.lot_details || []).filter(i => i.lot_number === purchase.lot_id).reduce((sum, i) => sum + (parseFloat(i.purchase_bags) || 0), 0);
-  return (parseFloat(purchase.manual_bags) || 0) - dispatchedBags;
+  const totalUsableBags = (parseFloat(purchase.manual_bags) || 0) - (parseFloat(purchase.dagi_bags) || 0);
+  return totalUsableBags - dispatchedBags;
 };
 
 const s = {
@@ -121,16 +122,11 @@ const Icon = ({ name, size = 18, color = clr.text }) => {
 const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div style={s.label}>{label}</div>{children}</div>;
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 14, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
 
-// ===== NEW SCREEN: DISPATCH ANALYTICS & PARTYWISE / COLD BREAKDOWN (UPDATED & FIXED) =====
+// ===== DISPATCH ANALYTICS & PARTYWISE BREAKDOWN =====
 const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases, payments, coldPayments }) => {
-  // 1. Calculate Party-wise Dispatches, Purchase Cost, Sale Received, Expenses & REAL Net Profit/Loss
-  // FIX: Purchase Cost Value (GP loaded value) and Sale Value are now kept fully separate per truck,
-  // and a proper Net Margin (Sale - Purchase Cost - Expenses) is computed per truck AND per party,
-  // so ghata/munafa (loss/profit) is never confused with turnover.
   const partyWiseSummary = parties.map(party => {
     const partyDispatches = dispatches.filter(d => d.destination_party_id === party.id);
 
-    // Per-truck (GP) breakdown — this is what actually moved (purchase cost) vs what it actually sold for
     const gpBreakdown = partyDispatches.map(d => {
       const purchaseCost = (d.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0);
       const saleValue = parseFloat(d.total_mandi_sale_amount) || 0;
@@ -151,15 +147,10 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
 
     const totalDispatchValue = gpBreakdown.reduce((sum, g) => sum + g.purchaseCost, 0);
     const totalSaleReceived = gpBreakdown.reduce((sum, g) => sum + g.saleValue, 0);
-    // FIX: Only count purchase cost & expenses of trucks that are ACTUALLY SOLD.
-    // Unsold/in-transit stock must never show as a "loss" just because it hasn't sold yet —
-    // a loss can only be real once the mandi sale is recorded.
     const soldPurchaseCost = gpBreakdown.filter(g => g.sold).reduce((sum, g) => sum + g.purchaseCost, 0);
     const totalExpenses = gpBreakdown.filter(g => g.sold).reduce((sum, g) => sum + g.expenses, 0);
-    // Real realized profit/loss — only from trucks that have a mandi sale recorded
     const netMargin = totalSaleReceived - soldPurchaseCost - totalExpenses;
 
-    // Total Payments Received from this party
     const partyGps = partyDispatches.map(d => d.gatepass_id);
     const totalPaymentsRec = payments.filter(p => partyGps.includes(p.gatepass_id)).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
 
@@ -179,13 +170,6 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
     };
   }).filter(p => p.dispatchCount > 0 || p.totalDispatchValue > 0);
 
-  // 2. Calculate Cold Storage-wise Dispatches, GP Details, Amount Paid Back & Due
-  // FIX: Cold's due is strictly based on what has been DISPATCHED (GP loaded purchase value) from that
-  // cold storage — never the full purchase register. Payments are then FIFO-allocated truck-by-truck
-  // (oldest GP first) so each individual GP shows exactly how much of it is paid vs still due.
-  // SIMPLIFIED: cold-wise is now just an aggregate — how much material value moved from this cold,
-  // how much has been paid, and what's due/advance. Lot-by-lot detail is already tracked in
-  // Purchase, Dispatch, Sale and PnL screens, so it isn't repeated here.
   const coldWiseSummary = coldStorages.map(cs => {
     let totalColdDispatchValue = 0;
     let totalBagsDispatched = 0;
@@ -216,7 +200,6 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
         🚚 Dispatch Value & Settlements Summary
       </div>
 
-      {/* OVERALL TOP METRICS */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
         <div style={{ ...s.card2, background: clr.blue + "18", border: `1px solid ${clr.blue}` }}>
           <div style={s.label}>Total GP Dispatch (Purchase) Value</div>
@@ -236,7 +219,6 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
         </div>
       </div>
 
-      {/* 1. PARTY-WISE DISPATCH & SALE BREAKDOWN */}
       <div style={{ ...s.label, fontSize: "13px", color: clr.text, marginBottom: 8, textTransform: "none" }}>
         🏢 Party-Wise Dispatch, Sale & Real Profit/Loss
       </div>
@@ -272,7 +254,6 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
               </div>
             </div>
 
-            {/* CLEAR NET PROFIT/LOSS — THE ACTUAL GHATA/MUNAFA */}
             <div style={{ ...s.card2, marginTop: 10, marginBottom: 0, background: p.netMargin >= 0 ? clr.green + "14" : clr.red + "14", border: `1px solid ${p.netMargin >= 0 ? clr.green : clr.red}` }}>
               <div style={s.rowBetween}>
                 <span style={{ fontSize: 12, color: clr.muted, fontWeight: 700 }}>NET PROFIT / LOSS (Sale − Purchase Cost − Expenses)</span>
@@ -287,7 +268,6 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
               <strong style={{ color: p.pendingDue > 0 ? clr.red : clr.green }}>₹{fmt(p.pendingDue)}</strong>
             </div>
 
-            {/* PER-TRUCK (GP) BREAKDOWN — purchase cost vs sale vs margin, truck by truck */}
             {p.gpBreakdown.length > 0 && (
               <div style={{ background: clr.card2, borderRadius: 8, padding: 8, marginTop: 10 }}>
                 <div style={{ ...s.label, fontSize: "11px", color: clr.accent, marginBottom: 4 }}>🚚 Truck-wise (GP) Cost vs Sale vs Margin</div>
@@ -313,7 +293,6 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
         ))
       )}
 
-      {/* 2. COLD STORAGE-WISE DISPATCH & PAYBACK BREAKDOWN (WITH GP & VEHICLE NO, PER-GP DUE) */}
       <div style={{ ...s.label, fontSize: "13px", color: clr.text, margin: "16px 0 8px 0", textTransform: "none" }}>
         ❄️ Cold Storage-Wise GP Dispatch & Payback Ledger
       </div>
@@ -354,12 +333,11 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
   );
 };
 
-// ===== DASHBOARD SCREEN WITH FULL LIFECYCLE SEARCH =====
+// ===== DASHBOARD SCREEN WITH UPDATED VEHICLE & LOT SMART SEARCH =====
 const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, varieties, gradings, coldStorages, coldPayments }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDetail, setSelectedDetail] = useState(null);
 
-  // Cold Storage Dues summary — dispatched (GP) value vs total paid, per cold storage
   const coldSummaryForDashboard = coldStorages.map(cs => {
     let totalColdDispatchValue = 0;
     dispatches.forEach(d => {
@@ -398,8 +376,10 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
     p.lot_id?.toLowerCase().includes(q) || p.farmer_name?.toLowerCase().includes(q)
   );
 
+  // SEARCH UPDATED: Support searching by Vehicle Number as well as Gatepass ID and Lot ID
   const filteredDispatches = q === "" ? [] : dispatches.filter(d => 
     d.gatepass_id?.toLowerCase().includes(q) || 
+    d.vehicle_number?.toLowerCase().includes(q) ||
     (d.lot_details || []).some(l => l.lot_number?.toLowerCase().includes(q))
   );
 
@@ -451,17 +431,17 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
         <div style={{ ...s.card2, background: clr.red + "15" }}><div style={s.label}>Closed Lots</div><div style={{ fontSize: 20, fontWeight: 800, color: clr.red }}>{closedLots} Lots</div></div>
       </div>
 
-      {/* ENHANCED SEARCH BAR */}
+      {/* SMART SEARCH BAR SUPPORTING VEHICLE NO, LOT ID, GP NO, FARMER NAME */}
       <div style={{ ...s.card, marginBottom: 12 }}>
-        <div style={s.label}>🔍 Smart Search (Lot ID / GP Number / Farmer Name)</div>
+        <div style={s.label}>🔍 Smart Search (Lot ID / Vehicle No / GP No / Farmer)</div>
         <input 
           style={{ ...s.input, marginTop: 6 }} 
-          placeholder="Search Lot, GP No, Farmer Name..." 
+          placeholder="Search Lot ID, Vehicle No, GP No, Farmer Name..." 
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
         {q !== "" && (
-          <div style={{ marginTop: 10, maxHeight: 250, overflowY: "auto" }}>
+          <div style={{ marginTop: 10, maxHeight: 300, overflowY: "auto" }}>
             {filteredPurchases.length === 0 && filteredDispatches.length === 0 && (
               <div style={{ fontSize: 13, color: clr.muted, textAlign: "center", padding: 8 }}>Koi record nahi mila.</div>
             )}
@@ -474,7 +454,7 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
               >
                 <div style={s.rowBetween}>
                   <span style={{ color: clr.accent, fontWeight: 700 }}>📥 Lot: {p.lot_id}</span>
-                  <span style={{ fontSize: 11, color: clr.muted }}>Click for details ➔</span>
+                  <span style={{ fontSize: 11, color: clr.muted }}>View Full Details ➔</span>
                 </div>
                 <div>Farmer: <strong>{p.farmer_name}</strong> | Bags: {p.manual_bags} | Date: {p.date}</div>
               </div>
@@ -487,10 +467,10 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
                 style={{ background: clr.card2, padding: 10, borderRadius: 8, marginBottom: 6, fontSize: 13, cursor: "pointer", border: `1px solid ${clr.blue}44` }}
               >
                 <div style={s.rowBetween}>
-                  <span style={{ color: clr.blue, fontWeight: 700 }}>📤 GP: {d.gatepass_id}</span>
-                  <span style={{ fontSize: 11, color: clr.muted }}>Click for details ➔</span>
+                  <span style={{ color: clr.blue, fontWeight: 700 }}>🚚 Vehicle: {d.vehicle_number} (GP: {d.gatepass_id})</span>
+                  <span style={{ fontSize: 11, color: clr.muted }}>View Truck Details ➔</span>
                 </div>
-                <div>Vehicle: <strong>{d.vehicle_number}</strong> | Sale: ₹{fmt(d.total_mandi_sale_amount || 0)}</div>
+                <div>Target Mandi: <strong>{mandis.find(m=>m.id===d.mandi_id)?.name || "N/A"}</strong> | Sale: ₹{fmt(d.total_mandi_sale_amount || 0)}</div>
               </div>
             ))}
           </div>
@@ -523,53 +503,66 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
         </div>
       )}
 
-      {/* FULL LIFECYCLE MODAL */}
-      <Modal open={!!selectedDetail} onClose={() => setSelectedDetail(null)} title="🔍 Complete Batch Lifecycle Journey">
+      {/* FULL LIFECYCLE SEARCH MODAL - EXPANDED LOT & VEHICLE DETAILS */}
+      <Modal open={!!selectedDetail} onClose={() => setSelectedDetail(null)} title="🔍 Complete Batch / Vehicle Lifecycle Journey">
         {selectedDetail && (
           <div style={{ fontSize: 14 }}>
-            {/* Purchase Details */}
+            {/* Purchase Details Breakdown */}
             <div style={{ ...s.card2, borderLeft: `4px solid ${clr.accent}`, marginBottom: 10 }}>
               <div style={{ fontWeight: 800, color: clr.accent, marginBottom: 6 }}>📥 1. PURCHASE DETAILS</div>
               {selectedDetail.purchases.length === 0 ? (
                 <div style={{ color: clr.muted, fontSize: 13 }}>No direct purchase record linked.</div>
               ) : (
-                selectedDetail.purchases.map(p => (
-                  <div key={p.id} style={{ fontSize: 13, lineHeight: "1.6" }}>
-                    <div>• <strong>Lot ID:</strong> {p.lot_id}</div>
-                    <div>• <strong>Farmer:</strong> {p.farmer_name}</div>
-                    <div>• <strong>Variety:</strong> {varieties.find(v => v.id === p.variety_id)?.name || "N/A"}</div>
-                    <div>• <strong>Grading:</strong> {gradings.find(g => g.id === p.grading_id)?.name || "N/A"}</div>
-                    <div>• <strong>Total Bags / Wt:</strong> {p.manual_bags} Bags ({p.total_weight} kg)</div>
-                    <div>• <strong>Rate / Bag:</strong> ₹{p.rate_per_bag}</div>
-                    <div>• <strong>Purchase Cost:</strong> <span style={{ color: clr.green, fontWeight: 700 }}>₹{fmt(p.total_cost)}</span></div>
-                    <div>• <strong>Cold Storage:</strong> {coldStorages.find(c => c.id === p.cold_storage_id)?.name || "N/A"}</div>
-                    <div>• <strong>Date:</strong> {p.date}</div>
-                  </div>
-                ))
+                selectedDetail.purchases.map(p => {
+                  const remaining = getRemainingBags(p, dispatches);
+                  const dispatchedCount = (p.manual_bags - (p.dagi_bags || 0)) - remaining;
+                  return (
+                    <div key={p.id} style={{ fontSize: 13, lineHeight: "1.6", marginBottom: 6, borderBottom: `1px dashed ${clr.border}`, paddingBottom: 6 }}>
+                      <div>• <strong>Lot ID:</strong> {p.lot_id}</div>
+                      <div>• <strong>Farmer:</strong> {p.farmer_name}</div>
+                      <div>• <strong>Variety:</strong> {varieties.find(v => v.id === p.variety_id)?.name || "N/A"}</div>
+                      <div>• <strong>Grading:</strong> {gradings.find(g => g.id === p.grading_id)?.name || "N/A"}</div>
+                      <div>• <strong>Total Purchased Bags:</strong> {p.manual_bags} Bags</div>
+                      <div>• <strong>Dagi / Cancelled Bags:</strong> <span style={{ color: clr.red }}>{p.dagi_bags || 0} Bags</span></div>
+                      <div>• <strong>Total Weight:</strong> {p.total_weight} kg</div>
+                      <div>• <strong>Rate per Bag (52.5kg Std):</strong> ₹{p.rate_per_bag}</div>
+                      <div>• <strong>Total Purchase Value:</strong> <span style={{ color: clr.green, fontWeight: 700 }}>₹{fmt(p.total_cost)}</span></div>
+                      <div>• <strong>Loaded Bags:</strong> {dispatchedCount} Bags | <strong>Balance Remaining:</strong> <span style={{ color: remaining > 0 ? clr.green : clr.red, fontWeight: 700 }}>{remaining} Bags</span></div>
+                      <div>• <strong>Cold Storage:</strong> {coldStorages.find(c => c.id === p.cold_storage_id)?.name || "N/A"}</div>
+                      <div>• <strong>Purchase Date:</strong> {p.date}</div>
+                    </div>
+                  );
+                })
               )}
             </div>
 
-            {/* Dispatch Logistics */}
+            {/* Dispatch Logistics & Vehicle Details */}
             <div style={{ ...s.card2, borderLeft: `4px solid ${clr.blue}`, marginBottom: 10 }}>
-              <div style={{ fontWeight: 800, color: clr.blue, marginBottom: 6 }}>📤 2. DISPATCH & LOGISTICS</div>
+              <div style={{ fontWeight: 800, color: clr.blue, marginBottom: 6 }}>📤 2. DISPATCH & VEHICLE LOGISTICS</div>
               {selectedDetail.dispatches.length === 0 ? (
                 <div style={{ color: clr.orange, fontSize: 13 }}>Abhi tak dispatch nahi hua hai (In Stock).</div>
               ) : (
                 selectedDetail.dispatches.map(d => (
                   <div key={d.id} style={{ fontSize: 13, lineHeight: "1.6", borderBottom: `1px dashed ${clr.border}`, paddingBottom: 6, marginBottom: 6 }}>
+                    <div>• <strong>Vehicle Number:</strong> <strong style={{ color: clr.accent }}>{d.vehicle_number}</strong></div>
                     <div>• <strong>Gatepass ID:</strong> {d.gatepass_id}</div>
-                    <div>• <strong>Vehicle No:</strong> {d.vehicle_number}</div>
                     <div>• <strong>Destination Party:</strong> {parties.find(pa => pa.id === d.destination_party_id)?.name || "N/A"}</div>
                     <div>• <strong>Target Mandi:</strong> {mandis.find(m => m.id === d.mandi_id)?.name || "N/A"}</div>
-                    <div>• <strong>Date:</strong> {d.date}</div>
+                    <div>• <strong>Dispatch Date:</strong> {d.date}</div>
+                    <div style={{ marginTop: 4, background: clr.card, padding: 6, borderRadius: 6 }}>
+                      <strong style={{ color: clr.accent }}>Lots Loaded in this Truck:</strong>
+                      {(d.lot_details || []).map((l, i) => (
+                        <div key={i}>- Lot {l.lot_number}: {l.purchase_bags} Bags ({l.purchase_weight_kg} kg)</div>
+                      ))}
+                    </div>
                   </div>
                 ))
               )}
             </div>
 
-            {/* Sale Realization */}
+            {/* Mandi Sale & Margin Details */}
             <div style={{ ...s.card2, borderLeft: `4px solid ${clr.green}` }}>
-              <div style={{ fontWeight: 800, color: clr.green, marginBottom: 6 }}>💰 3. MANDI SALE & MARGIN</div>
+              <div style={{ fontWeight: 800, color: clr.green, marginBottom: 6 }}>💰 3. MANDI SALE & NET MARGIN</div>
               {selectedDetail.dispatches.length === 0 || !selectedDetail.dispatches.some(d => d.total_mandi_sale_amount > 0) ? (
                 <div style={{ color: clr.muted, fontSize: 13 }}>Mandi sale register nahi hui hai.</div>
               ) : (
@@ -580,11 +573,11 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
                   const margin = saleAmt - lotCost - expAmt;
                   return (
                     <div key={d.id} style={{ fontSize: 13, lineHeight: "1.6" }}>
-                      <div>• <strong>Mandi Sale Received:</strong> <span style={{ color: clr.green, fontWeight: 700 }}>₹{fmt(saleAmt)}</span></div>
-                      <div>• <strong>Mandi Rec. Weight:</strong> {d.total_mandi_weight_received} kg</div>
-                      <div>• <strong>Expenses:</strong> ₹{fmt(expAmt)}</div>
+                      <div>• <strong>Mandi Gross Sale Amount:</strong> <span style={{ color: clr.green, fontWeight: 700 }}>₹{fmt(saleAmt)}</span></div>
+                      <div>• <strong>Mandi Weight Received:</strong> {d.total_mandi_weight_received} kg</div>
+                      <div>• <strong>Expenses Registered:</strong> ₹{fmt(expAmt)}</div>
                       <div style={{ borderTop: `1px solid ${clr.border}`, marginTop: 4, paddingTop: 4 }}>
-                        • <strong>Net Profit / Loss:</strong> <span style={{ fontWeight: 800, color: margin >= 0 ? clr.green : clr.red }}>₹{fmt(margin)}</span>
+                        • <strong>Net Profit / Loss (NP):</strong> <span style={{ fontWeight: 800, color: margin >= 0 ? clr.green : clr.red }}>{margin >= 0 ? "+" : ""}₹{fmt(margin)}</span>
                       </div>
                     </div>
                   );
@@ -598,17 +591,15 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
   );
 };
 
-// ===== PURCHASE SCREEN =====
+// ===== PURCHASE SCREEN (UPDATED WITH DAGI/CANCEL BAGS OPTION) =====
 const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, coldStorages }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() });
+  const [form, setForm] = useState({ lot_id: "", farmer_name: "", manual_bags: "", dagi_bags: 0, total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() });
   
   const totalBags = purchases.reduce((sum, p) => sum + (parseInt(p.manual_bags) || 0), 0);
   const totalRemaining = purchases.reduce((sum, p) => sum + getRemainingBags(p, dispatches), 0);
 
-  // FIX: Active lots stay on top, fully-dispatched (closed) lots automatically sink to the bottom.
-  // Any ACTIVE lot older than 15 days is flagged red and pinned above everything else.
   const sortedPurchases = [...purchases].map(p => {
     const remaining = getRemainingBags(p, dispatches);
     const isClosed = remaining <= 0;
@@ -622,14 +613,23 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   });
 
   const save = async () => {
-    if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag || !form.total_weight) {
+    if (!form.lot_id || !form.farmer_name || !form.manual_bags || !form.rate_per_bag) {
       return alert("❌ Fill all required fields!");
     }
-    const totWt = parseFloat(form.total_weight) || 0;
+    const totalBagsInput = parseFloat(form.manual_bags) || 0;
+    const dagiInput = parseFloat(form.dagi_bags) || 0;
+    const effectiveBags = totalBagsInput - dagiInput;
+
     const rateBag = parseFloat(form.rate_per_bag) || 0;
-    const stdBags = totWt / 52.5;
+    const stdBags = (parseFloat(form.total_weight) || (effectiveBags * 52.5)) / 52.5;
     const currentTotalCost = stdBags * rateBag;
-    const payload = { ...form, std_bags: stdBags.toFixed(2), total_cost: currentTotalCost };
+    
+    const payload = { 
+      ...form, 
+      dagi_bags: dagiInput,
+      std_bags: stdBags.toFixed(2), 
+      total_cost: currentTotalCost 
+    };
 
     if (editItem) {
       const success = await opsP.editItem(editItem.id, payload);
@@ -649,12 +649,14 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
 
       <div style={{ ...s.rowBetween, marginBottom: 14 }}>
         <span style={{ fontWeight: 700, fontSize: 16 }}>Purchase Book</span>
-        <button onClick={() => { setEditItem(null); setForm({ lot_id: "", farmer_name: "", manual_bags: "", total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() }); setShowForm(true); }} style={s.btn(clr.accent, "#000")}><Icon name="add" size={14} /> Add New</button>
+        <button onClick={() => { setEditItem(null); setForm({ lot_id: "", farmer_name: "", manual_bags: "", dagi_bags: 0, total_weight: "", rate_per_bag: "", variety_id: "", grading_id: "", cold_storage_id: "", date: today() }); setShowForm(true); }} style={s.btn(clr.accent, "#000")}><Icon name="add" size={14} /> Add New</button>
       </div>
 
       {sortedPurchases.map(p => {
         const remaining = p._remaining;
         const isClosed = p._isClosed;
+        const effectiveBags = (parseInt(p.manual_bags) || 0) - (parseInt(p.dagi_bags) || 0);
+
         return (
           <div key={p.id} style={{ ...s.card, borderLeft: `4px solid ${p._isAging ? clr.red : (isClosed ? clr.red : clr.green)}` }}>
             <div style={s.rowBetween}>
@@ -674,9 +676,11 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
 
             <div style={s.divider} />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13 }}>
-              <div>Total Bags: <strong>{p.manual_bags}</strong></div>
+              <div>Purchased Bags: <strong>{p.manual_bags}</strong></div>
+              <div>Dagi/Cancel Bags: <strong style={{ color: clr.red }}>{p.dagi_bags || 0}</strong></div>
+              <div>Effective Bags: <strong>{effectiveBags}</strong></div>
               <div>Remaining Bags: <strong style={{ color: remaining > 0 ? clr.green : clr.red }}>{remaining}</strong></div>
-              <div>Rate/Bag (52.5k): <strong>₹{p.rate_per_bag}</strong></div>
+              <div>Rate/Bag (52.5kg): <strong>₹{p.rate_per_bag}</strong></div>
               <div>Total Value: <strong style={{ color: clr.green }}>₹{fmt(p.total_cost)}</strong></div>
             </div>
             <div style={{ ...s.row, marginTop: 10 }}>
@@ -692,8 +696,9 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
         <Field label="Farmer Name"><input style={s.input} value={form.farmer_name} onChange={e => setForm({ ...form, farmer_name: e.target.value })} /></Field>
         <Field label="Variety"><select style={s.select} value={form.variety_id} onChange={e => setForm({ ...form, variety_id: e.target.value })}><option value="">Select Variety</option>{varieties.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select></Field>
         <Field label="Grading"><select style={s.select} value={form.grading_id} onChange={e => setForm({ ...form, grading_id: e.target.value })}><option value="">Select Grading</option>{gradings.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
-        <Field label="Total Weight (kg)"><input type="number" style={s.input} value={form.total_weight} onChange={e => setForm({ ...form, total_weight: e.target.value })} /></Field>
+        <Field label="Total Weight (kg)"><input type="number" style={s.input} value={form.total_weight} onChange={e => setForm({ ...form, total_weight: e.target.value })} placeholder="Auto-calculated or enter manually" /></Field>
         <Field label="Manual Bags Count"><input type="number" style={s.input} value={form.manual_bags} onChange={e => setForm({ ...form, manual_bags: e.target.value })} /></Field>
+        <Field label="Dagi / Cancel Bags Count"><input type="number" style={s.input} value={form.dagi_bags} onChange={e => setForm({ ...form, dagi_bags: e.target.value })} placeholder="Enter cancelled or spoiled bags count" /></Field>
         <Field label="Rate per Bag (₹)"><input type="number" style={s.input} value={form.rate_per_bag} onChange={e => setForm({ ...form, rate_per_bag: e.target.value })} /></Field>
         <Field label="Cold Storage Location"><select style={s.select} value={form.cold_storage_id} onChange={e => setForm({ ...form, cold_storage_id: e.target.value })}><option value="">Select Storage</option>{coldStorages.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
         <Field label="Date"><input type="date" style={s.input} value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></Field>
@@ -703,21 +708,19 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   );
 };
 
-// ===== DISPATCH LOGISTICS =====
-const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varieties, gradings }) => {
+// ===== DISPATCH LOGISTICS (UPDATED WITH AUTO WEIGHT SYNC & 52.5 KG STD RATE LOGIC) =====
+const DispatchScreen = ({ dispatches, purchases, opsD, opsP, parties, mandis, varieties, gradings }) => {
   const [showForm, setShowForm] = useState(false);
   const [showPopModal, setShowPopModal] = useState(false);
   const [popData, setPopData] = useState(null);
   const [form, setForm] = useState({ gatepass_id: "", vehicle_number: "", driver_name: "", lot_details: [], date: today(), destination_party_id: "", mandi_id: "", cold_storage_id: "", total_expenses: 0, total_purchase_amount: 0, total_dispatch_weight: 0 });
-  const [itemForm, setItemForm] = useState({ lot_number: "", purchase_bags: "" });
+  const [itemForm, setItemForm] = useState({ lot_number: "", purchase_bags: "", manual_weight_kg: "" });
 
   const availableLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0);
 
-  // Average weight per bag for the currently selected lot, taken from its Purchase entry
-  // (Total Weight ÷ Total Bags at purchase time). Used to auto-fetch dispatch weight below.
   const selectedLotForItem = purchases.find(p => p.lot_id === itemForm.lot_number);
   const avgWeightPerBag = selectedLotForItem ? ((parseFloat(selectedLotForItem.total_weight) || 0) / (parseFloat(selectedLotForItem.manual_bags) || 1)) : 0;
-  const autoCalculatedWeight = avgWeightPerBag * (parseInt(itemForm.purchase_bags) || 0);
+  const autoCalculatedWeight = itemForm.manual_weight_kg ? parseFloat(itemForm.manual_weight_kg) : (avgWeightPerBag * (parseInt(itemForm.purchase_bags) || 0));
 
   const addLotToTruck = () => {
     if (!itemForm.lot_number || !itemForm.purchase_bags) {
@@ -731,19 +734,33 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
 
     if (bagsToLoad > remaining) return alert(`Only ${remaining} bags available in this lot!`);
 
-    // AUTO-FETCH: weight = (purchase's total weight ÷ purchase's total bags) × bags being dispatched
-    const purchaseAvgWeightPerBag = (parseFloat(matchedPurchase.total_weight) || 0) / (parseFloat(matchedPurchase.manual_bags) || 1);
-    const autoWeight = purchaseAvgWeightPerBag * bagsToLoad;
+    const loadedWeight = itemForm.manual_weight_kg ? parseFloat(itemForm.manual_weight_kg) : autoCalculatedWeight;
     
-    const stdBagsCalculated = autoWeight / 52.5; 
+    // STD RATE FIXED TO 52.5 KG PER BAG
+    const stdBagsCalculated = loadedWeight / 52.5; 
     const originalRatePerBag = parseFloat(matchedPurchase.rate_per_bag) || 0;
     const calculatedLotValue = stdBagsCalculated * originalRatePerBag; 
     const ratePerKg = originalRatePerBag / 52.5;
 
+    // AUTO-SYNC LOGIC: Average weight per bag loaded = loadedWeight / bagsToLoad.
+    // Sync this average weight across all total purchase bags of that lot in Purchase Register.
+    if (opsP && matchedPurchase) {
+      const avgLoadedWeightPerBag = loadedWeight / (bagsToLoad || 1);
+      const effectiveTotalBags = (parseFloat(matchedPurchase.manual_bags) || 0) - (parseFloat(matchedPurchase.dagi_bags) || 0);
+      const syncedTotalWeight = (avgLoadedWeightPerBag * effectiveTotalBags).toFixed(2);
+      const syncedTotalCost = (effectiveTotalBags * originalRatePerBag).toFixed(2);
+
+      opsP.editItem(matchedPurchase.id, {
+        total_weight: syncedTotalWeight,
+        std_bags: (syncedTotalWeight / 52.5).toFixed(2),
+        total_cost: syncedTotalCost
+      });
+    }
+
     const newLot = {
       lot_number: itemForm.lot_number,
       purchase_bags: bagsToLoad, 
-      purchase_weight_kg: autoWeight,
+      purchase_weight_kg: loadedWeight,
       purchase_rate_per_kg: ratePerKg,
       purchase_lot_value: calculatedLotValue,
       variety_name: varieties.find(v => v.id === matchedPurchase.variety_id)?.name || "N/A",
@@ -759,7 +776,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
         total_dispatch_weight: updatedDetails.reduce((s, item) => s + (parseFloat(item.purchase_weight_kg) || 0), 0)
       };
     });
-    setItemForm({ lot_number: "", purchase_bags: "" });
+    setItemForm({ lot_number: "", purchase_bags: "", manual_weight_kg: "" });
   };
 
   const triggerPopMsg = (dispatchObj) => { setPopData(dispatchObj); setShowPopModal(true); };
@@ -859,12 +876,13 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
           <div style={s.label}>🚚 Load Multiple Lots into Truck</div>
           <select style={{ ...s.select, marginBottom: 6 }} value={itemForm.lot_number} onChange={e => setItemForm({ ...itemForm, lot_number: e.target.value })}><option value="">Select Available Lot</option>{availableLots.map(l => <option key={l.id} value={l.lot_id}>{l.lot_id}</option>)}</select>
           <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Bags Count" value={itemForm.purchase_bags} onChange={e => setItemForm({ ...itemForm, purchase_bags: e.target.value })} />
+          <input type="number" style={{ ...s.input, marginBottom: 6 }} placeholder="Actual Weight at Loading (kg)" value={itemForm.manual_weight_kg} onChange={e => setItemForm({ ...itemForm, manual_weight_kg: e.target.value })} />
           {itemForm.lot_number && itemForm.purchase_bags && (
             <div style={{ fontSize: 12, color: clr.muted, marginBottom: 6 }}>
-              ⚖️ Auto-Fetched Weight: <strong style={{ color: clr.accent }}>{autoCalculatedWeight.toFixed(2)} kg</strong> (based on lot's avg weight/bag)
+              ⚖️ Calculated Dispatch Weight: <strong style={{ color: clr.accent }}>{autoCalculatedWeight.toFixed(2)} kg</strong>
             </div>
           )}
-          <button onClick={addLotToTruck} style={{ ...s.btnSm(clr.accent, "#000"), width: "100%" }}>+ Add Lot & Calculate Value</button>
+          <button onClick={addLotToTruck} style={{ ...s.btnSm(clr.accent, "#000"), width: "100%" }}>+ Add Lot & Sync Weight to Purchase</button>
         </div>
         {form.lot_details.length > 0 && (
           <div style={{ marginBottom: 10, fontSize: 13, background: clr.card2, padding: 10, borderRadius: 8 }}>
@@ -883,7 +901,7 @@ const DispatchScreen = ({ dispatches, purchases, opsD, parties, mandis, varietie
   );
 };
 
-// ===== MANDI SALE SCREEN (WITH EDIT & DELETE ENABLED) =====
+// ===== MANDI SALE SCREEN =====
 const SaleScreen = ({ dispatches, opsD, parties, mandis }) => {
   const [showForm, setShowForm] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -978,7 +996,6 @@ const SaleScreen = ({ dispatches, opsD, parties, mandis }) => {
               <div style={{ marginTop: 2, color: clr.accent }}>Original Truck Loaded Value: <strong>₹{fmt(loadedValue)}</strong></div>
             </div>
             
-            {/* EDIT & DELETE ACTION BUTTONS */}
             <div style={{ ...s.row, marginTop: 10 }}>
               <button onClick={() => handleEditOpen(sx)} style={{ ...s.btnSm(), flex: 1 }}><Icon name="edit" size={12} /> Edit Sale</button>
               <button onClick={() => handleDeleteMandiSale(sx.id, sx.gatepass_id)} style={{ ...s.btnSm(), flex: 1, color: clr.red }}><Icon name="trash" size={12} color={clr.red} /> Delete Sale</button>
@@ -1054,8 +1071,6 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
     downloadCSV(`PartyPayments_${today()}.csv`, headers, rows);
   };
 
-  // FIX: Track how long a party's due has been pending (from the oldest GP still unpaid) so
-  // parties delayed 7+ days can be surfaced at the top.
   const activePartiesSummary = parties.map(p => {
     const dispatchesToParty = dispatches.filter(d => d.destination_party_id === p.id);
     const totalSale = dispatchesToParty.reduce((sum, d) => sum + (parseFloat(d.total_mandi_sale_amount) || 0), 0);
@@ -1164,7 +1179,7 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
   );
 };
 
-// ===== COLD STORAGE DUE & HISTORY (FIXED FOR GP VALUE & PER-GP DETAILS) =====
+// ===== COLD STORAGE DUE & HISTORY =====
 const ColdStorageDueScreen = ({ purchases, dispatches, coldStorages, coldPayments, opsColdPayment }) => {
   const [showPayForm, setShowPayForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -1195,10 +1210,6 @@ const ColdStorageDueScreen = ({ purchases, dispatches, coldStorages, coldPayment
     downloadCSV(`ColdPayments_${today()}.csv`, headers, rows);
   };
 
-  // SIMPLIFIED: Cold Storage Due strictly from GP Dispatched Material (never full purchase register).
-  // Lot/GP level detail is already tracked in Purchase/Dispatch/Sale/PnL screens, so this screen only
-  // shows the aggregate: value loaded, total paid, and net due/advance.
-  // Urgency: flagged (and pinned to top) if due > ₹3,00,000 OR the oldest unpaid truck is 20+ days old.
   const activeColdSummary = coldStorages.map(cs => {
     let totalColdDispatchValue = 0;
     let rawGPs = [];
@@ -1222,7 +1233,6 @@ const ColdStorageDueScreen = ({ purchases, dispatches, coldStorages, coldPayment
     const historyLogs = coldPayments.filter(cp => cp.cold_storage_id === cs.id).sort((a,b) => new Date(b.date) - new Date(a.date));
     const remainingDue = totalColdDispatchValue - totalPaidToCold;
 
-    // Internal-only FIFO pass just to find the oldest still-pending truck's date, for delay tracking
     const sortedGPs = [...rawGPs].sort((a, b) => new Date(a.date) - new Date(b.date));
     let remainingPaid = totalPaidToCold;
     let oldestPendingDate = null;
@@ -1430,7 +1440,7 @@ export default function App() {
       <div style={s.header}>
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
           <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent, letterSpacing: 0.5 }}>🥔 JSN FARM</span>
-          <span style={{ fontSize: 10, color: clr.muted, fontWeight: 600 }}>AlooTrader v5.7</span>
+          <span style={{ fontSize: 10, color: clr.muted, fontWeight: 600 }}>AlooTrader v5.8</span>
         </div>
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
@@ -1438,7 +1448,7 @@ export default function App() {
       {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} payments={payments.data} mandis={mandis.data} parties={parties.data} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} coldPayments={coldPayments.data} />}
       {activeTab === "analytics" && <DispatchAnalyticsScreen dispatches={dispatches.data} parties={parties.data} coldStorages={coldStorages.data} purchases={purchases.data} payments={payments.data} coldPayments={coldPayments.data} />}
       {activeTab === "purchase" && <PurchaseScreen purchases={purchases.data} dispatches={dispatches.data} opsP={purchases} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
-      {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} varieties={varieties.data} gradings={gradings.data} />}
+      {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} opsP={purchases} parties={parties.data} mandis={mandis.data} varieties={varieties.data} gradings={gradings.data} />}
       {activeTab === "sale" && <SaleScreen dispatches={dispatches.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} />}
       {activeTab === "payment" && <PaymentScreen dispatches={dispatches.data} purchases={purchases.data} payments={payments.data} opsPayment={payments} parties={parties.data} />}
       {activeTab === "colddue" && <ColdStorageDueScreen purchases={purchases.data} dispatches={dispatches.data} coldStorages={coldStorages.data} coldPayments={coldPayments.data} opsColdPayment={coldPayments} />}
