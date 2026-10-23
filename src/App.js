@@ -123,7 +123,7 @@ const Field = ({ label, children }) => <div style={{ marginBottom: 12 }}><div st
 const Modal = ({ open, onClose, title, children }) => !open ? null : <div style={{ position: "fixed", inset: 0, background: "#000c", zIndex: 1000, display: "flex", alignItems: "flex-end" }}><div style={{ background: clr.card, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "92vh", display: "flex", flexDirection: "column", border: `1px solid ${clr.border}` }}><div style={{ ...s.rowBetween, padding: 14, borderBottom: `1px solid ${clr.border}` }}><span style={{ fontWeight: 700, fontSize: 16 }}>{title}</span><button onClick={onClose} style={s.btnSm()}><Icon name="x" size={14} /></button></div><div style={{ overflowY: "auto", padding: "0 14px 20px" }}>{children}</div></div></div>;
 
 // ===== DISPATCH ANALYTICS & PARTYWISE BREAKDOWN =====
-const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases, payments, coldPayments }) => {
+const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases, payments, coldPayments, mandis }) => {
   const partyWiseSummary = parties.map(party => {
     const partyDispatches = dispatches.filter(d => d.destination_party_id === party.id);
 
@@ -137,6 +137,8 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
         gatepass_id: d.gatepass_id,
         vehicle_number: d.vehicle_number,
         date: d.date,
+        bags: (d.lot_details || []).reduce((s, i) => s + (parseFloat(i.purchase_bags) || 0), 0),
+        mandiName: mandis?.find(m => m.id === d.mandi_id)?.name || "N/A",
         purchaseCost,
         saleValue,
         expenses,
@@ -145,6 +147,7 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
       };
     });
 
+    const totalBags = gpBreakdown.reduce((sum, g) => sum + g.bags, 0);
     const totalDispatchValue = gpBreakdown.reduce((sum, g) => sum + g.purchaseCost, 0);
     const totalSaleReceived = gpBreakdown.reduce((sum, g) => sum + g.saleValue, 0);
     const soldPurchaseCost = gpBreakdown.filter(g => g.sold).reduce((sum, g) => sum + g.purchaseCost, 0);
@@ -165,6 +168,7 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
       netMargin,
       totalPaymentsRec,
       pendingDue,
+      totalBags,
       dispatchCount: partyDispatches.length,
       gpBreakdown
     };
@@ -193,6 +197,7 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
   const grandDispatchValue = partyWiseSummary.reduce((sum, p) => sum + p.totalDispatchValue, 0);
   const grandSaleReceived = partyWiseSummary.reduce((sum, p) => sum + p.totalSaleReceived, 0);
   const grandNetMargin = partyWiseSummary.reduce((sum, p) => sum + p.netMargin, 0);
+  const grandTotalBags = dispatches.reduce((sum, d) => sum + (d.lot_details || []).reduce((s2, i) => s2 + (parseFloat(i.purchase_bags) || 0), 0), 0);
 
   return (
     <div style={s.content}>
@@ -208,6 +213,12 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
         <div style={{ ...s.card2, background: clr.green + "18", border: `1px solid ${clr.green}` }}>
           <div style={s.label}>Total Mandi Sale Received</div>
           <div style={{ fontSize: 18, fontWeight: 900, color: clr.green }}>₹{fmt(grandSaleReceived)}</div>
+        </div>
+      </div>
+      <div style={{ ...s.card2, background: clr.accent + "18", border: `1px solid ${clr.accent}`, marginBottom: 8 }}>
+        <div style={s.rowBetween}>
+          <span style={s.label}>Total Bags Dispatched (All Trucks)</span>
+          <span style={{ fontSize: 18, fontWeight: 900, color: clr.accent }}>{fmt(grandTotalBags)} Bags</span>
         </div>
       </div>
       <div style={{ ...s.card2, background: grandNetMargin >= 0 ? clr.green + "18" : clr.red + "18", border: `1px solid ${grandNetMargin >= 0 ? clr.green : clr.red}`, marginBottom: 14 }}>
@@ -252,6 +263,10 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
                 <span style={{ color: clr.muted, fontSize: 11 }}>CASH RECEIVED</span>
                 <div style={{ fontWeight: 600, color: clr.text }}>₹{fmt(p.totalPaymentsRec)}</div>
               </div>
+              <div style={{ gridColumn: "1 / span 2" }}>
+                <span style={{ color: clr.muted, fontSize: 11 }}>TOTAL BAGS DISPATCHED</span>
+                <div style={{ fontWeight: 700, color: clr.accent, fontSize: 15 }}>{fmt(p.totalBags)} Bags</div>
+              </div>
             </div>
 
             <div style={{ ...s.card2, marginTop: 10, marginBottom: 0, background: p.netMargin >= 0 ? clr.green + "14" : clr.red + "14", border: `1px solid ${p.netMargin >= 0 ? clr.green : clr.red}` }}>
@@ -276,6 +291,9 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
                     <div style={s.rowBetween}>
                       <span><strong>GP: {gp.gatepass_id}</strong> ({gp.vehicle_number})</span>
                       <span style={{ color: clr.muted, fontSize: 11 }}>{gp.date}</span>
+                    </div>
+                    <div style={{ color: clr.muted, fontSize: 11 }}>
+                      Mandi: <strong style={{ color: clr.text }}>{gp.mandiName}</strong> · Bags: <strong style={{ color: clr.accent }}>{fmt(gp.bags)}</strong>
                     </div>
                     <div style={{ color: clr.muted, fontSize: 11 }}>
                       Purchase Cost: <strong style={{ color: clr.blue }}>₹{fmt(gp.purchaseCost)}</strong> · Sale: <strong style={{ color: clr.green }}>{gp.sold ? `₹${fmt(gp.saleValue)}` : "Not Sold Yet"}</strong>
@@ -376,6 +394,7 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
     p.lot_id?.toLowerCase().includes(q) || p.farmer_name?.toLowerCase().includes(q)
   );
 
+  // SEARCH UPDATED: Support searching by Vehicle Number as well as Gatepass ID and Lot ID
   const filteredDispatches = q === "" ? [] : dispatches.filter(d => 
     d.gatepass_id?.toLowerCase().includes(q) || 
     d.vehicle_number?.toLowerCase().includes(q) ||
@@ -502,10 +521,11 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
         </div>
       )}
 
-      {/* FULL LIFECYCLE SEARCH MODAL */}
+      {/* FULL LIFECYCLE SEARCH MODAL - EXPANDED LOT & VEHICLE DETAILS */}
       <Modal open={!!selectedDetail} onClose={() => setSelectedDetail(null)} title="🔍 Complete Batch / Vehicle Lifecycle Journey">
         {selectedDetail && (
           <div style={{ fontSize: 14 }}>
+            {/* Purchase Details Breakdown */}
             <div style={{ ...s.card2, borderLeft: `4px solid ${clr.accent}`, marginBottom: 10 }}>
               <div style={{ fontWeight: 800, color: clr.accent, marginBottom: 6 }}>📥 1. PURCHASE DETAILS</div>
               {selectedDetail.purchases.length === 0 ? (
@@ -534,6 +554,7 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
               )}
             </div>
 
+            {/* Dispatch Logistics & Vehicle Details */}
             <div style={{ ...s.card2, borderLeft: `4px solid ${clr.blue}`, marginBottom: 10 }}>
               <div style={{ fontWeight: 800, color: clr.blue, marginBottom: 6 }}>📤 2. DISPATCH & VEHICLE LOGISTICS</div>
               {selectedDetail.dispatches.length === 0 ? (
@@ -557,6 +578,7 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
               )}
             </div>
 
+            {/* Mandi Sale & Margin Details */}
             <div style={{ ...s.card2, borderLeft: `4px solid ${clr.green}` }}>
               <div style={{ fontWeight: 800, color: clr.green, marginBottom: 6 }}>💰 3. MANDI SALE & NET MARGIN</div>
               {selectedDetail.dispatches.length === 0 || !selectedDetail.dispatches.some(d => d.total_mandi_sale_amount > 0) ? (
@@ -587,7 +609,7 @@ const DashboardScreen = ({ purchases, dispatches, payments, mandis, parties, var
   );
 };
 
-// ===== PURCHASE SCREEN (BUG 3 FIXED HERE) =====
+// ===== PURCHASE SCREEN (UPDATED WITH DAGI/CANCEL BAGS OPTION) =====
 const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, coldStorages }) => {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -616,7 +638,7 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
     const dagiInput = parseFloat(form.dagi_bags) || 0;
     const effectiveBags = totalBagsInput - dagiInput;
 
-    // BUG 3 FIX APPLIED HERE: Weight & Total Bill Auto-Adjust on Dagi Change
+    // Dagi dalne par weight aur bill sirf effective bags (total - dagi) ke hisaab se banega
     let weightForLot;
     if (editItem) {
       const oldEff = (parseFloat(editItem.manual_bags) || 0) - (parseFloat(editItem.dagi_bags) || 0);
@@ -721,7 +743,7 @@ const PurchaseScreen = ({ purchases, dispatches, opsP, varieties, gradings, cold
   );
 };
 
-// ===== DISPATCH LOGISTICS (BUG 1 & BUG 2 FIXED HERE) =====
+// ===== DISPATCH LOGISTICS (UPDATED WITH AUTO WEIGHT SYNC & 52.5 KG STD RATE LOGIC) =====
 const DispatchScreen = ({ dispatches, purchases, opsD, opsP, parties, mandis, varieties, gradings }) => {
   const [showForm, setShowForm] = useState(false);
   const [showPopModal, setShowPopModal] = useState(false);
@@ -732,13 +754,10 @@ const DispatchScreen = ({ dispatches, purchases, opsD, opsP, parties, mandis, va
   const availableLots = purchases.filter(p => getRemainingBags(p, dispatches) > 0);
 
   const selectedLotForItem = purchases.find(p => p.lot_id === itemForm.lot_number);
-
-  // BUG 2 FIX APPLIED HERE: Average weight per bag divide by effective bags
   const avgWeightPerBag = selectedLotForItem
     ? ((parseFloat(selectedLotForItem.total_weight) || 0) /
        (((parseFloat(selectedLotForItem.manual_bags) || 0) - (parseFloat(selectedLotForItem.dagi_bags) || 0)) || 1))
     : 0;
-
   const autoCalculatedWeight = itemForm.manual_weight_kg ? parseFloat(itemForm.manual_weight_kg) : (avgWeightPerBag * (parseInt(itemForm.purchase_bags) || 0));
 
   const addLotToTruck = () => {
@@ -755,20 +774,22 @@ const DispatchScreen = ({ dispatches, purchases, opsD, opsP, parties, mandis, va
 
     const loadedWeight = itemForm.manual_weight_kg ? parseFloat(itemForm.manual_weight_kg) : autoCalculatedWeight;
     
+    // STD RATE FIXED TO 52.5 KG PER BAG
     const stdBagsCalculated = loadedWeight / 52.5; 
     const originalRatePerBag = parseFloat(matchedPurchase.rate_per_bag) || 0;
     const calculatedLotValue = stdBagsCalculated * originalRatePerBag; 
     const ratePerKg = originalRatePerBag / 52.5;
 
-    // AUTO-SYNC LOGIC & BUG 1 FIX APPLIED HERE:
+    // AUTO-SYNC LOGIC: Average weight per bag loaded = loadedWeight / bagsToLoad.
+    // Sync this average weight across all effective bags of that lot in Purchase Register.
     if (opsP && matchedPurchase) {
       const avgLoadedWeightPerBag = loadedWeight / (bagsToLoad || 1);
       const effectiveTotalBags = (parseFloat(matchedPurchase.manual_bags) || 0) - (parseFloat(matchedPurchase.dagi_bags) || 0);
-      const syncedTotalWeight = avgLoadedWeightPerBag * effectiveTotalBags;
+      const syncedTotalWeight = (avgLoadedWeightPerBag * effectiveTotalBags).toFixed(2);
       const syncedTotalCost = ((syncedTotalWeight / 52.5) * originalRatePerBag).toFixed(2);
 
       opsP.editItem(matchedPurchase.id, {
-        total_weight: syncedTotalWeight.toFixed(2),
+        total_weight: syncedTotalWeight,
         std_bags: (syncedTotalWeight / 52.5).toFixed(2),
         total_cost: syncedTotalCost
       });
@@ -1250,7 +1271,7 @@ const ColdStorageDueScreen = ({ purchases, dispatches, coldStorages, coldPayment
     const historyLogs = coldPayments.filter(cp => cp.cold_storage_id === cs.id).sort((a,b) => new Date(b.date) - new Date(a.date));
     const remainingDue = totalColdDispatchValue - totalPaidToCold;
 
-    const sortedGPs = [...rawGPs].sort((a, b) => new Date(a.date) - new Date(a.date));
+    const sortedGPs = [...rawGPs].sort((a, b) => new Date(a.date) - new Date(b.date));
     let remainingPaid = totalPaidToCold;
     let oldestPendingDate = null;
     for (const gp of sortedGPs) {
@@ -1457,13 +1478,13 @@ export default function App() {
       <div style={s.header}>
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
           <span style={{ fontWeight: 900, fontSize: 18, color: clr.accent, letterSpacing: 0.5 }}>🥔 JSN FARM</span>
-          <span style={{ fontSize: 10, color: clr.muted, fontWeight: 600 }}>AlooTrader v5.9</span>
+          <span style={{ fontSize: 10, color: clr.muted, fontWeight: 600 }}>AlooTrader v5.8</span>
         </div>
         <Badge v={activeTab.toUpperCase()} color={clr.blue} />
       </div>
 
       {activeTab === "dashboard" && <DashboardScreen purchases={purchases.data} dispatches={dispatches.data} payments={payments.data} mandis={mandis.data} parties={parties.data} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} coldPayments={coldPayments.data} />}
-      {activeTab === "analytics" && <DispatchAnalyticsScreen dispatches={dispatches.data} parties={parties.data} coldStorages={coldStorages.data} purchases={purchases.data} payments={payments.data} coldPayments={coldPayments.data} />}
+      {activeTab === "analytics" && <DispatchAnalyticsScreen dispatches={dispatches.data} parties={parties.data} coldStorages={coldStorages.data} purchases={purchases.data} payments={payments.data} coldPayments={coldPayments.data} mandis={mandis.data} />}
       {activeTab === "purchase" && <PurchaseScreen purchases={purchases.data} dispatches={dispatches.data} opsP={purchases} varieties={varieties.data} gradings={gradings.data} coldStorages={coldStorages.data} />}
       {activeTab === "dispatch" && <DispatchScreen dispatches={dispatches.data} purchases={purchases.data} opsD={dispatches} opsP={purchases} parties={parties.data} mandis={mandis.data} varieties={varieties.data} gradings={gradings.data} />}
       {activeTab === "sale" && <SaleScreen dispatches={dispatches.data} opsD={dispatches} parties={parties.data} mandis={mandis.data} />}
