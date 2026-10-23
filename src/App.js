@@ -92,6 +92,11 @@ const getRemainingBags = (purchase, dispatches = []) => {
   return totalUsableBags - dispatchedBags;
 };
 
+const dispatchTime = (d) => {
+  const ts = new Date(d.date || d.created_at).getTime();
+  return isNaN(ts) ? 0 : ts;
+};
+
 const s = {
   screen: { minHeight: "100vh", background: clr.bg, color: clr.text, fontFamily: "system-ui, sans-serif", maxWidth: 480, margin: "0 auto", position: "relative", fontSize: "15px" },
   header: { background: clr.card, padding: "14px 16px", borderBottom: `1px solid ${clr.border}`, position: "sticky", top: 0, zIndex: 100, display: "flex", justifyContent: "space-between", alignItems: "center" },
@@ -127,7 +132,7 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
   const partyWiseSummary = parties.map(party => {
     const partyDispatches = dispatches.filter(d => d.destination_party_id === party.id);
 
-    const gpBreakdown = partyDispatches.map(d => {
+    const gpBreakdown = [...partyDispatches].sort((a, b) => dispatchTime(b) - dispatchTime(a)).map(d => {
       const purchaseCost = (d.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0);
       const saleValue = parseFloat(d.total_mandi_sale_amount) || 0;
       const expenses = parseFloat(d.total_expenses) || 0;
@@ -170,9 +175,11 @@ const DispatchAnalyticsScreen = ({ dispatches, parties, coldStorages, purchases,
       pendingDue,
       totalBags,
       dispatchCount: partyDispatches.length,
+      lastActivity: Math.max(0, ...partyDispatches.map(dispatchTime)),
       gpBreakdown
     };
-  }).filter(p => p.dispatchCount > 0 || p.totalDispatchValue > 0);
+  }).filter(p => p.dispatchCount > 0 || p.totalDispatchValue > 0)
+    .sort((a, b) => b.lastActivity - a.lastActivity);
 
   const coldWiseSummary = coldStorages.map(cs => {
     let totalColdDispatchValue = 0;
@@ -946,6 +953,11 @@ const SaleScreen = ({ dispatches, opsD, parties, mandis }) => {
   const [selectedDispatchId, setSelectedDispatchId] = useState("");
   const [form, setForm] = useState({ id: "", gatepass_id: "", total_mandi_weight_received: "", total_mandi_sale_amount: "", total_expenses: 0, original_load_value: 0 });
 
+  const partyLastActivity = {};
+  dispatches.forEach(d => {
+    partyLastActivity[d.destination_party_id] = Math.max(partyLastActivity[d.destination_party_id] || 0, dispatchTime(d));
+  });
+
   const exportSalesCSV = () => {
     const headers = ["Gatepass ID", "Vehicle Number", "Destination Party", "Target Mandi", "Date", "Mandi Weight (kg)", "Sale Amount", "Expenses", "Loaded Purchase Value", "Net Margin"];
     const rows = dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(d => {
@@ -1022,7 +1034,9 @@ const SaleScreen = ({ dispatches, opsD, parties, mandis }) => {
       </div>
       <button onClick={exportSalesCSV} style={{ ...s.btnSm(), width: "100%", marginBottom: 14, justifyContent: "center" }}>⬇️ Export CSV (by Party / Mandi / Vehicle)</button>
 
-      {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(sx => {
+      {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0)
+        .sort((a, b) => ((partyLastActivity[b.destination_party_id] || 0) - (partyLastActivity[a.destination_party_id] || 0)) || (dispatchTime(b) - dispatchTime(a)))
+        .map(sx => {
         const loadedValue = (sx.lot_details || []).reduce((s, item) => s + (parseFloat(item.purchase_lot_value) || 0), 0);
         const currentExp = parseFloat(sx.total_expenses) || 0;
         return (
@@ -1110,7 +1124,8 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
   };
 
   const activePartiesSummary = parties.map(p => {
-    const dispatchesToParty = dispatches.filter(d => d.destination_party_id === p.id);
+    const dispatchesToParty = dispatches.filter(d => d.destination_party_id === p.id).sort((a, b) => dispatchTime(b) - dispatchTime(a));
+    const lastActivity = Math.max(0, ...dispatchesToParty.map(dispatchTime));
     const totalSale = dispatchesToParty.reduce((sum, d) => sum + (parseFloat(d.total_mandi_sale_amount) || 0), 0);
     const gpsToParty = dispatchesToParty.map(d => d.gatepass_id);
     
@@ -1129,12 +1144,9 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
     const delayDays = oldestPendingDate ? Math.floor((new Date() - new Date(oldestPendingDate)) / (1000 * 60 * 60 * 24)) : 0;
     const isDelayed = due > 0 && delayDays > 7;
 
-    return { id: p.id, name: p.name, totalSale, paidAmount: totalPaidAmount, due, gpBreakdown, delayDays, isDelayed };
+    return { id: p.id, name: p.name, totalSale, paidAmount: totalPaidAmount, due, gpBreakdown, delayDays, isDelayed, lastActivity };
   }).filter(p => p.gpBreakdown.length > 0 || p.due !== 0)
-    .sort((a, b) => {
-      if (a.isDelayed !== b.isDelayed) return a.isDelayed ? -1 : 1;
-      return b.delayDays - a.delayDays;
-    });
+    .sort((a, b) => b.lastActivity - a.lastActivity);
 
   return (
     <div style={s.content}>
