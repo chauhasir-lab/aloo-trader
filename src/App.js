@@ -1211,7 +1211,13 @@ const PaymentScreen = ({ dispatches, payments, opsPayment, parties }) => {
         <Field label="Link Gatepass Code">
           <select style={s.select} value={form.gatepass_id} onChange={e => setForm({ ...form, gatepass_id: e.target.value })} disabled={!!editItem}>
             <option value="">Select GP Track</option>
-            {dispatches.filter(d => (d.total_mandi_sale_amount || 0) > 0).map(ds => <option key={ds.id} value={ds.gatepass_id}>{ds.gatepass_id} ({ds.vehicle_number})</option>)}
+            {dispatches.filter(d => {
+              const saleAmt = parseFloat(d.total_mandi_sale_amount) || 0;
+              if (saleAmt <= 0) return false;
+              if (editItem && editItem.gatepass_id === d.gatepass_id) return true;
+              const paidAmt = payments.filter(py => py.gatepass_id === d.gatepass_id).reduce((sum, py) => sum + (parseFloat(py.amount) || 0), 0);
+              return saleAmt - paidAmt > 0.5;
+            }).map(ds => <option key={ds.id} value={ds.gatepass_id}>{ds.gatepass_id} ({ds.vehicle_number})</option>)}
           </select>
         </Field>
         <Field label="Amount Received (₹)"><input type="number" style={s.input} value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></Field>
